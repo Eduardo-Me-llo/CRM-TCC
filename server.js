@@ -63,11 +63,23 @@ function printDatabaseHelp(error) {
 
 const pool = new Pool(createPoolConfig(DATABASE_URL));
 const app = express();
+let databaseReadyPromise;
 
 app.use(helmet({ contentSecurityPolicy: false }));
 app.use(cors());
 app.use(express.json({ limit: '2mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
+
+app.use(async (req, res, next) => {
+  if (req.path.startsWith('/api/')) {
+    try {
+      await ensureDatabaseReady();
+    } catch (error) {
+      return next(error);
+    }
+  }
+  next();
+});
 
 const ROLES = {
   DEVELOPER: 'DEVELOPER',
@@ -517,6 +529,13 @@ async function initDatabase() {
     entityType: 'system',
     metadata: { version: '6.0.0', demoTenant: 'fgv.br' }
   });
+}
+
+function ensureDatabaseReady() {
+  if (!databaseReadyPromise) {
+    databaseReadyPromise = initDatabase();
+  }
+  return databaseReadyPromise;
 }
 
 // AUTH
@@ -1085,14 +1104,18 @@ app.use((error, _req, res, _next) => {
   res.status(status).json({ message: error.message || 'Erro interno do servidor.' });
 });
 
-initDatabase()
-  .then(() => {
-    app.listen(PORT, () => {
-      console.log(`CRM SaaS v6 rodando em http://localhost:${PORT}`);
-      console.log(`Banco: ${maskDatabaseUrl(DATABASE_URL)}`);
+if (require.main === module) {
+  ensureDatabaseReady()
+    .then(() => {
+      app.listen(PORT, () => {
+        console.log(`CRM SaaS v6 rodando em http://localhost:${PORT}`);
+        console.log(`Banco: ${maskDatabaseUrl(DATABASE_URL)}`);
+      });
+    })
+    .catch(error => {
+      printDatabaseHelp(error);
+      process.exit(1);
     });
-  })
-  .catch(error => {
-    printDatabaseHelp(error);
-    process.exit(1);
-  });
+}
+
+module.exports = app;
