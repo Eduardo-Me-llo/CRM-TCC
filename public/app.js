@@ -416,7 +416,7 @@ function companiesTable(companies) {
 
 function bindCompanyEvents() {
   $all('[data-route]').forEach(btn => btn.addEventListener('click', () => navigate(btn.dataset.route)));
-  $('#newCompany')?.addEventListener('click', openCompanyModal);
+  $('#newCompany')?.addEventListener('click', () => openCompanyModal());
   $('#companySearch')?.addEventListener('input', filterCompanies);
   $('#companyStatus')?.addEventListener('change', filterCompanies);
   $all('[data-company-detail]').forEach(row => row.addEventListener('click', () => openCompanyDetail(row.dataset.companyDetail)));

@@ -41,6 +41,10 @@ function maskDatabaseUrl(connectionString) {
   return String(connectionString || '').replace(/:[^:@/]+@/, ':****@');
 }
 
+function isUuid(value) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value || ''));
+}
+
 function printDatabaseHelp(error) {
   console.error('Falha ao iniciar banco de dados:', error.message);
   console.error('');
@@ -849,6 +853,7 @@ app.get('/api/client-companies', requireAuth, requireTenantUser, requirePermissi
 }));
 
 app.get('/api/client-companies/:companyId', requireAuth, requireTenantUser, requirePermission('client_companies.read'), asyncHandler(async (req, res) => {
+  if (!isUuid(req.params.companyId)) return res.status(400).json({ message: 'ID da empresa cliente inválido.' });
   const result = await query(
     `SELECT c.*, u.name AS owner_name,
             COUNT(DISTINCT ct.id)::int AS contacts_count,
@@ -883,6 +888,7 @@ app.post('/api/client-companies', requireAuth, requireTenantUser, requirePermiss
 
 app.put('/api/client-companies/:companyId', requireAuth, requireTenantUser, requirePermission('client_companies.update'), asyncHandler(async (req, res) => {
   const { companyId } = req.params;
+  if (!isUuid(companyId)) return res.status(400).json({ message: 'ID da empresa cliente inválido.' });
   const { name, tradeName, cnpj, industry, status, source, ownerUserId, city, state, address, notes, tags } = req.body;
   const result = await query(
     `UPDATE client_companies
@@ -909,6 +915,7 @@ app.put('/api/client-companies/:companyId', requireAuth, requireTenantUser, requ
 }));
 
 app.delete('/api/client-companies/:companyId', requireAuth, requireTenantUser, requirePermission('client_companies.delete'), asyncHandler(async (req, res) => {
+  if (!isUuid(req.params.companyId)) return res.status(400).json({ message: 'ID da empresa cliente inválido.' });
   const result = await query(`DELETE FROM client_companies WHERE id = $1 AND tenant_id = $2 RETURNING id, name`, [req.params.companyId, req.user.tenantId]);
   if (!result.rows.length) return res.status(404).json({ message: 'Empresa cliente não encontrada.' });
   await createAuditLog({ tenantId: req.user.tenantId, userId: req.user.id, action: 'client_company.deleted', entityType: 'client_company', entityId: req.params.companyId, metadata: { name: result.rows[0].name } });
