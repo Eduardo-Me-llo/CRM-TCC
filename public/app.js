@@ -3,7 +3,8 @@ const state = {
   user: JSON.parse(localStorage.getItem('crm_user') || 'null'),
   route: location.hash.replace('#', '') || '',
   cache: {},
-  alert: null
+  alert: null,
+  sidebarCollapsed: localStorage.getItem('crm_sidebar_collapsed') === 'true'
 };
 
 const roleLabels = {
@@ -17,7 +18,7 @@ const roleLabels = {
 const statusLabels = {
   active: 'Ativo',
   inactive: 'Inativo',
-  prospect: 'Prospect',
+  prospect: 'Prospecção',
   former: 'Antigo cliente',
   paused: 'Pausado',
   open: 'Aberto',
@@ -191,6 +192,12 @@ function logout(update = true) {
   if (update) navigate('login');
 }
 
+function setSidebarCollapsed(collapsed) {
+  state.sidebarCollapsed = collapsed;
+  localStorage.setItem('crm_sidebar_collapsed', String(collapsed));
+  $('.app-shell')?.classList.toggle('sidebar-collapsed', collapsed);
+}
+
 function renderLogin() {
   document.body.className = '';
   $('#app').innerHTML = `
@@ -206,13 +213,13 @@ function renderLogin() {
             <div class="hero-card"><strong>RBAC</strong><span>Rotas protegidas por permissão</span></div>
           </div>
         </div>
-        <div class="small">Login de teste: eduardo.de.mello@fgv.br ou desenvolvedor@crm.local • senha 123456</div>
+        <div class="small">Login de teste: desenvolvedor@crm.local ou usuário cadastrado • senha inicial 123456</div>
       </section>
       <section class="login-form-wrap">
         <form class="login-card" id="loginForm">
-          <div class="logo-row"><div class="logo">FGV</div><div><h2>Entrar no CRM</h2><div class="muted">Use seu e-mail institucional.</div></div></div>
+          <div class="logo-row"><div class="logo">CRM</div><div><h2>Entrar no CRM</h2><div class="muted">Use seu e-mail institucional.</div></div></div>
           ${alertHtml()}
-          <div class="field"><label>E-mail</label><input class="input" name="email" type="email" value="eduardo.de.mello@fgv.br" required /></div>
+          <div class="field"><label>E-mail</label><input class="input" name="email" type="email" value="" placeholder="seu.email@empresa.com" required /></div>
           <div style="height:12px"></div>
           <div class="field"><label>Senha</label><input class="input" name="password" type="password" value="123456" required /></div>
           <div style="height:18px"></div>
@@ -221,7 +228,7 @@ function renderLogin() {
           <div class="alert">
             <strong>Contas úteis</strong><br />
             <span class="small">desenvolvedor@crm.local</span><br />
-            <span class="small">eduardo.de.mello@fgv.br</span>
+            <span class="small">usuário cadastrado da sua empresa</span>
           </div>
         </form>
       </section>
@@ -250,11 +257,12 @@ function shell(content) {
   document.body.className = 'in-app';
   const nav = isDeveloper() ? developerNav() : tenantNav();
   $('#app').innerHTML = `
-    <div class="app-shell">
+    <div class="app-shell ${state.sidebarCollapsed ? 'sidebar-collapsed' : ''}">
       <aside class="sidebar">
         <div class="side-head">
-          <div class="logo">${isDeveloper() ? 'DEV' : 'FGV'}</div>
+          <div class="logo">${isDeveloper() ? 'DEV' : 'CRM'}</div>
           <div><div class="side-title">${isDeveloper() ? 'Painel SaaS' : esc(state.user.tenantName || 'CRM')}</div><div class="side-subtitle">${isDeveloper() ? 'Administração global' : esc(state.user.tenantDomain || '')}</div></div>
+          <button class="sidebar-toggle" id="sidebarToggle" type="button" title="${state.sidebarCollapsed ? 'Expandir menu' : 'Recolher menu'}">${state.sidebarCollapsed ? '>' : '<'}</button>
         </div>
         ${nav}
         <div class="sidebar-footer">
@@ -267,13 +275,44 @@ function shell(content) {
         <header class="topbar">
           <div class="status-pill">● Sistema online</div>
           <div class="search-box">⌕ Buscar empresas, contatos, relacionamentos...</div>
-          <div class="user-chip"><div><strong>${esc(state.user.name)}</strong><div class="small" style="color:#dc2626">${esc(roleLabels[state.user.role] || state.user.role)}</div></div><div class="avatar">${esc(initials(state.user.name))}</div></div>
+          <div class="user-menu-wrap">
+            <button class="user-chip" id="userMenuToggle" type="button">
+              <div><strong>${esc(state.user.name)}</strong><div class="small user-role">${esc(roleLabels[state.user.role] || state.user.role)}</div></div>
+              <div class="avatar">${esc(initials(state.user.name))}</div>
+            </button>
+            <div class="user-menu" id="userMenu">
+              <div class="user-menu-head">
+                <strong>${esc(state.user.name)}</strong>
+                <span>${esc(state.user.email)}</span>
+                <span>${esc(state.user.tenantName || 'Painel CRM')}</span>
+              </div>
+              ${!isDeveloper() ? '<button type="button" data-route="settings">Preferencias</button>' : '<button type="button" data-route="developer-settings">Configuracoes</button>'}
+              ${has('users.read') ? '<button type="button" data-route="users">Usuarios e acessos</button>' : ''}
+              <button type="button" id="logoutMenuBtn">Sair</button>
+            </div>
+          </div>
         </header>
         <section class="content">${alertHtml()}${content}</section>
       </main>
     </div>`;
   $('#logoutBtn').addEventListener('click', () => logout(true));
+  $('#logoutMenuBtn')?.addEventListener('click', () => logout(true));
+  $('#sidebarToggle')?.addEventListener('click', () => setSidebarCollapsed(!state.sidebarCollapsed));
+  $('#userMenuToggle')?.addEventListener('click', event => {
+    event.stopPropagation();
+    const menu = $('#userMenu');
+    menu?.classList.toggle('open');
+    if (menu?.classList.contains('open')) {
+      setTimeout(() => document.addEventListener('click', closeUserMenuOnce, { once: true }));
+    }
+  });
   $all('[data-route]').forEach(btn => btn.addEventListener('click', () => navigate(btn.dataset.route)));
+}
+
+function closeUserMenuOnce(event) {
+  const menu = $('#userMenu');
+  const wrap = $('.user-menu-wrap');
+  if (menu && wrap && !wrap.contains(event.target)) menu.classList.remove('open');
 }
 
 function navButton(route, icon, label) {
@@ -283,6 +322,7 @@ function tenantNav() {
   const items = [];
   if (has('dashboard.read')) items.push(navButton('dashboard', '▦', 'Visão Geral'));
   if (has('client_companies.read')) items.push(navButton('companies', '🏢', 'Empresas Clientes'));
+  if (has('client_companies.read')) items.push(navButton('prospects', '◎', 'Prospecção'));
   if (has('client_contacts.read')) items.push(navButton('contacts', '👥', 'Contatos'));
   if (has('client_interactions.read')) items.push(navButton('interactions', '☎', 'Relacionamentos'));
   const admin = [];
@@ -323,6 +363,7 @@ async function renderTenant() {
   try {
     if (route === 'dashboard') return shell(await viewDashboard());
     if (route === 'companies') return shell(await viewCompanies());
+    if (route === 'prospects') return shell(await viewProspects());
     if (route === 'contacts') return shell(await viewContacts());
     if (route === 'interactions') return shell(await viewInteractions());
     if (route === 'users' && has('users.read')) return shell(await viewUsers());
@@ -368,7 +409,7 @@ async function viewDashboard() {
     <div style="height:18px"></div>
     <div class="grid grid-2">
       <div class="card pad"><h2>Status das empresas</h2><div style="height:12px"></div>${data.companiesByStatus.map(s => `<div style="display:flex;justify-content:space-between;padding:12px 0;border-bottom:1px solid var(--border)">${statusBadge(s.status)}<strong>${s.total}</strong></div>`).join('') || '<div class="empty">Sem dados.</div>'}</div>
-      <div class="card pad"><h2>Arquitetura desta entrega</h2><p class="muted">Esta versão usa PostgreSQL, tenant_id em tabelas críticas e permissões validadas no backend. A FGV é apenas uma empresa contratante de exemplo.</p><button class="btn primary" id="goCompanies">Abrir Empresas Clientes</button></div>
+      <div class="card pad"><h2>Arquitetura desta entrega</h2><p class="muted">Esta versão usa PostgreSQL, tenant_id em tabelas críticas e permissões validadas no backend. Cada empresa contratante trabalha em um ambiente isolado.</p><button class="btn primary" id="goCompanies">Abrir Empresas Clientes</button></div>
     </div>`;
 }
 function bindDashboardEvents() {
@@ -385,6 +426,7 @@ async function viewCompanies() {
   return `${pageHeader('Empresas Clientes', 'Organizações atendidas, possíveis clientes ou antigos clientes.', '🏢', actions)}
     <div class="tabs">
       <button class="tab active">Empresas</button>
+      <button class="tab" data-route="prospects">Prospecção</button>
       <button class="tab" data-route="contacts">Contatos vinculados</button>
       <button class="tab" data-route="interactions">Relacionamentos</button>
     </div>
@@ -396,6 +438,83 @@ async function viewCompanies() {
       <div class="muted small">Clique em uma linha para abrir a visão detalhada.</div>
     </div>
     <div id="companyArea">${companiesTable(companies)}</div>`;
+}
+
+async function viewProspects() {
+  const [companies, users, contacts] = await Promise.all([
+    api('/api/client-companies'),
+    has('users.read') ? api('/api/users').catch(() => []) : Promise.resolve([]),
+    has('client_contacts.read') ? api('/api/client-contacts').catch(() => []) : Promise.resolve([])
+  ]);
+  const prospects = companies.filter(c => c.status === 'prospect');
+  state.cache.companies = companies;
+  state.cache.prospects = prospects;
+  state.cache.users = users;
+  state.cache.contacts = contacts;
+  setTimeout(bindProspectEvents);
+  const actions = has('client_companies.create') ? `<button class="btn primary" id="newProspect">+ Nova prospecção</button>` : '';
+  return `${pageHeader('Empresas em Prospecção', 'Pipeline de empresas ainda em abordagem, com contatos e relacionamento comercial.', '◎', actions)}
+    <div class="tabs">
+      <button class="tab" data-route="companies">Empresas</button>
+      <button class="tab active">Prospecção</button>
+      <button class="tab" data-route="contacts">Contatos</button>
+      <button class="tab" data-route="interactions">Relacionamentos</button>
+    </div>
+    <div class="toolbar">
+      <div class="filters">
+        <input class="input" style="width:300px" id="prospectSearch" placeholder="Buscar prospecção, origem, ramo..." />
+      </div>
+      <div class="muted small">${prospects.length} empresa(s) em prospecção</div>
+    </div>
+    <div id="prospectArea">${prospectsTable(prospects)}</div>`;
+}
+
+function prospectsTable(prospects) {
+  if (!prospects.length) return '<div class="card empty">Nenhuma empresa em prospecção cadastrada.</div>';
+  return `<div class="table-wrap"><table><thead><tr><th>Empresa</th><th>Origem</th><th>Ramo</th><th>Contatos</th><th>Última interação</th><th>Próxima ação</th><th>Responsável</th><th>Ações</th></tr></thead><tbody>
+    ${prospects.map(c => `<tr class="clickable" data-company-detail="${c.id}">
+      <td><strong>${esc(c.name)}</strong><div class="muted small">${esc(c.tradeName || c.cnpj || '-')}</div></td>
+      <td>${esc(c.source || '-')}</td>
+      <td>${esc(c.industry || '-')}</td>
+      <td><strong>${c.contactsCount}</strong></td>
+      <td>${fmtDateOnly(c.lastInteractionAt)}</td>
+      <td>${fmtDateOnly(c.nextActionAt)}</td>
+      <td>${esc(c.ownerName || '-')}</td>
+      <td><div class="split-actions">
+        ${has('client_contacts.create') ? `<button class="btn" data-new-prospect-contact="${c.id}">Contato</button>` : ''}
+        ${has('client_interactions.create') ? `<button class="btn primary" data-new-prospect-interaction="${c.id}">Relacionar</button>` : ''}
+      </div></td>
+    </tr>`).join('')}
+  </tbody></table></div>`;
+}
+
+function bindProspectEvents() {
+  $all('[data-route]').forEach(btn => btn.addEventListener('click', () => navigate(btn.dataset.route)));
+  $('#newProspect')?.addEventListener('click', () => openCompanyModal({ status: 'prospect' }));
+  $('#prospectSearch')?.addEventListener('input', filterProspects);
+  bindProspectRowActions();
+}
+
+function bindProspectRowActions() {
+  $all('[data-company-detail]').forEach(row => row.addEventListener('click', () => openCompanyDetail(row.dataset.companyDetail)));
+  $all('[data-new-prospect-contact]').forEach(btn => btn.addEventListener('click', event => {
+    event.stopPropagation();
+    openContactModal({ companyId: btn.dataset.newProspectContact });
+  }));
+  $all('[data-new-prospect-interaction]').forEach(btn => btn.addEventListener('click', event => {
+    event.stopPropagation();
+    openInteractionModal({ companyId: btn.dataset.newProspectInteraction });
+  }));
+}
+
+function filterProspects() {
+  const q = $('#prospectSearch').value.toLowerCase();
+  const list = state.cache.prospects.filter(c => {
+    const text = [c.name, c.tradeName, c.cnpj, c.industry, c.source, c.notes, (c.tags || []).join(' ')].join(' ').toLowerCase();
+    return !q || text.includes(q);
+  });
+  $('#prospectArea').innerHTML = prospectsTable(list);
+  bindProspectRowActions();
 }
 
 function companiesTable(companies) {
@@ -432,10 +551,11 @@ function filterCompanies() {
   $all('[data-company-detail]').forEach(row => row.addEventListener('click', () => openCompanyDetail(row.dataset.companyDetail)));
 }
 function openCompanyModal(company = null) {
+  const isEdit = Boolean(company?.id);
   const usersOptions = (state.cache.users || []).map(u => `<option value="${u.id}" ${company?.ownerUserId === u.id ? 'selected' : ''}>${esc(u.name)} - ${esc(roleLabels[u.role] || u.role)}</option>`).join('');
   modal({
-    title: company ? 'Editar empresa cliente' : 'Nova empresa cliente',
-    submitText: company ? 'Salvar alterações' : 'Cadastrar empresa',
+    title: isEdit ? 'Editar empresa cliente' : 'Nova empresa cliente',
+    submitText: isEdit ? 'Salvar alterações' : 'Cadastrar empresa',
     body: `
       <div class="form-grid">
         <div class="field"><label>Nome da empresa *</label><input class="input" name="name" value="${esc(company?.name || '')}" required /></div>
@@ -454,8 +574,8 @@ function openCompanyModal(company = null) {
     onSubmit: async values => {
       values.tags = tagsFromText(values.tags);
       if (!values.ownerUserId) delete values.ownerUserId;
-      await api(company ? `/api/client-companies/${company.id}` : '/api/client-companies', { method: company ? 'PUT' : 'POST', body: JSON.stringify(values) });
-      setAlert(company ? 'Empresa atualizada.' : 'Empresa cliente cadastrada.');
+      await api(isEdit ? `/api/client-companies/${company.id}` : '/api/client-companies', { method: isEdit ? 'PUT' : 'POST', body: JSON.stringify(values) });
+      setAlert(isEdit ? 'Empresa atualizada.' : 'Empresa cliente cadastrada.');
     }
   });
 }
@@ -505,14 +625,14 @@ async function viewContacts() {
   setTimeout(bindContactEvents);
   const actions = has('client_contacts.create') ? `<button class="btn primary" id="newContact">+ Novo contato</button>` : '';
   return `${pageHeader('Contatos', 'Pessoas vinculadas às empresas clientes.', '👥', actions)}
-    <div class="tabs"><button class="tab" data-route="companies">Empresas</button><button class="tab active">Contatos</button><button class="tab" data-route="interactions">Relacionamentos</button></div>
+    <div class="tabs"><button class="tab" data-route="companies">Empresas</button><button class="tab" data-route="prospects">Prospecção</button><button class="tab active">Contatos</button><button class="tab" data-route="interactions">Relacionamentos</button></div>
     <div class="toolbar"><div class="filters"><input class="input" id="contactSearch" style="width:280px" placeholder="Buscar contato, e-mail, telefone..." /><select class="select" id="contactCompany" style="width:260px"><option value="">Todas as empresas</option>${companies.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select></div></div>
     <div id="contactArea">${contactsTable(contacts)}</div>`;
 }
 function contactsTable(contacts) {
   if (!contacts.length) return '<div class="card empty">Nenhum contato cadastrado.</div>';
   return `<div class="table-wrap"><table><thead><tr><th>Contato</th><th>Empresa</th><th>Cargo</th><th>Comunicação</th><th>Preferência</th><th>Última interação</th><th>Status</th><th>Ações</th></tr></thead><tbody>
-    ${contacts.map(c => `<tr>
+    ${contacts.map(c => `<tr class="clickable" data-contact-detail="${c.id}">
       <td><strong>${esc(c.name)}</strong><div class="muted small">${esc(c.email || '-')}</div></td>
       <td>${esc(c.companyName || '-')}</td>
       <td>${esc(c.position || '-')}</td>
@@ -532,11 +652,13 @@ function bindContactEvents() {
   bindContactRowActions();
 }
 function bindContactRowActions() {
+  $all('[data-contact-detail]').forEach(row => row.addEventListener('click', () => openContactDetail(row.dataset.contactDetail)));
   $all('[data-edit-contact]').forEach(btn => btn.addEventListener('click', () => openContactModal(state.cache.contacts.find(c => c.id === btn.dataset.editContact))));
   $all('[data-new-interaction-contact]').forEach(btn => {
     const contact = state.cache.contacts.find(c => c.id === btn.dataset.newInteractionContact);
     btn.addEventListener('click', () => openInteractionModal({ companyId: contact.companyId, contactId: contact.id }));
   });
+  $all('[data-edit-contact], [data-new-interaction-contact]').forEach(btn => btn.addEventListener('click', event => event.stopPropagation()));
 }
 function filterContacts() {
   const q = $('#contactSearch').value.toLowerCase();
@@ -579,6 +701,50 @@ function openContactModal(contact = null) {
   });
 }
 
+async function openContactDetail(contactId) {
+  const contact = state.cache.contacts?.find(c => c.id === contactId) || (await api('/api/client-contacts')).find(c => c.id === contactId);
+  if (!contact) return;
+  const interactions = await api(`/api/client-interactions?companyId=${contact.companyId}`);
+  const contactInteractions = interactions.filter(i => i.contactId === contact.id);
+  modal({
+    title: contact.name,
+    submitText: 'Fechar',
+    body: `
+      <div class="detail-stack">
+        <div class="detail-title">
+          <div>
+            <h2>${esc(contact.name)}</h2>
+            <div class="muted">${esc(contact.position || 'Cargo não informado')} • ${esc(contact.companyName || '-')}</div>
+          </div>
+          ${statusBadge(contact.status)}
+        </div>
+        <div class="detail-grid">
+          <div><span class="detail-label">E-mail</span><strong>${esc(contact.email || '-')}</strong></div>
+          <div><span class="detail-label">Telefone</span><strong>${esc(contact.phone || '-')}</strong></div>
+          <div><span class="detail-label">WhatsApp</span><strong>${esc(contact.whatsapp || '-')}</strong></div>
+          <div><span class="detail-label">Canal preferido</span><strong>${esc(channelLabels[contact.preferredChannel] || contact.preferredChannel || '-')}</strong></div>
+        </div>
+        <div class="detail-panel">
+          <h3>Observações</h3>
+          <p class="muted">${esc(contact.notes || 'Nenhuma observação registrada.')}</p>
+        </div>
+        <div class="split-actions">
+          ${has('client_contacts.update') ? `<button class="btn" type="button" id="editContactFromDetail">Editar contato</button>` : ''}
+          ${has('client_interactions.create') ? `<button class="btn primary" type="button" id="newInteractionFromContactDetail">Novo relacionamento</button>` : ''}
+        </div>
+        <div class="detail-panel">
+          <h3>Relacionamentos com este contato</h3>
+          <div class="timeline">${contactInteractions.length ? contactInteractions.map(i => `<div class="timeline-item"><strong>${esc(i.subject)}</strong><div class="muted small">${esc(channelLabels[i.channel] || i.channel)} • ${fmtDate(i.createdAt)}</div><p>${esc(i.description)}</p></div>`).join('') : '<div class="empty">Nenhum relacionamento registrado.</div>'}</div>
+        </div>
+      </div>`,
+    onSubmit: async () => {}
+  });
+  setTimeout(() => {
+    $('#editContactFromDetail')?.addEventListener('click', () => { $('.modal-backdrop')?.remove(); openContactModal(contact); });
+    $('#newInteractionFromContactDetail')?.addEventListener('click', () => { $('.modal-backdrop')?.remove(); openInteractionModal({ companyId: contact.companyId, contactId: contact.id }); });
+  });
+}
+
 async function viewInteractions() {
   const [interactions, companies, contacts] = await Promise.all([api('/api/client-interactions'), api('/api/client-companies'), api('/api/client-contacts')]);
   state.cache.interactions = interactions;
@@ -587,7 +753,7 @@ async function viewInteractions() {
   setTimeout(bindInteractionEvents);
   const actions = has('client_interactions.create') ? `<button class="btn primary" id="newInteraction">+ Novo relacionamento</button>` : '';
   return `${pageHeader('Relacionamentos', 'Linha de acompanhamento com clientes e contatos.', '☎', actions)}
-    <div class="tabs"><button class="tab" data-route="companies">Empresas</button><button class="tab" data-route="contacts">Contatos</button><button class="tab active">Relacionamentos</button></div>
+    <div class="tabs"><button class="tab" data-route="companies">Empresas</button><button class="tab" data-route="prospects">Prospecção</button><button class="tab" data-route="contacts">Contatos</button><button class="tab active">Relacionamentos</button></div>
     <div class="toolbar">
       <div class="filters">
         <input class="input" id="interactionSearch" style="width:260px" placeholder="Buscar assunto, descrição..." />
@@ -600,7 +766,7 @@ async function viewInteractions() {
 function interactionsTable(interactions) {
   if (!interactions.length) return '<div class="card empty">Nenhum relacionamento registrado.</div>';
   return `<div class="table-wrap"><table><thead><tr><th>Data</th><th>Empresa</th><th>Contato</th><th>Canal</th><th>Assunto</th><th>Responsável</th><th>Resultado</th><th>Próxima ação</th><th>Status</th></tr></thead><tbody>
-    ${interactions.map(i => `<tr>
+    ${interactions.map(i => `<tr class="clickable" data-interaction-detail="${i.id}">
       <td>${fmtDate(i.createdAt)}</td>
       <td>${esc(i.companyName || '-')}</td>
       <td>${esc(i.contactName || '-')}</td>
@@ -619,6 +785,10 @@ function bindInteractionEvents() {
   $('#interactionSearch')?.addEventListener('input', filterInteractions);
   $('#interactionCompany')?.addEventListener('change', filterInteractions);
   $('#interactionChannel')?.addEventListener('change', filterInteractions);
+  bindInteractionRowActions();
+}
+function bindInteractionRowActions() {
+  $all('[data-interaction-detail]').forEach(row => row.addEventListener('click', () => openInteractionDetail(row.dataset.interactionDetail)));
 }
 function filterInteractions() {
   const q = $('#interactionSearch').value.toLowerCase();
@@ -629,6 +799,7 @@ function filterInteractions() {
     return (!q || text.includes(q)) && (!companyId || i.companyId === companyId) && (!channel || i.channel === channel);
   });
   $('#interactionArea').innerHTML = interactionsTable(list);
+  bindInteractionRowActions();
 }
 function openInteractionModal(prefill = {}) {
   const companies = state.cache.companies || [];
@@ -654,6 +825,38 @@ function openInteractionModal(prefill = {}) {
       await api('/api/client-interactions', { method: 'POST', body: JSON.stringify(values) });
       setAlert('Relacionamento registrado.');
     }
+  });
+}
+
+function openInteractionDetail(interactionId) {
+  const interaction = state.cache.interactions?.find(i => i.id === interactionId);
+  if (!interaction) return;
+  modal({
+    title: interaction.subject,
+    submitText: 'Fechar',
+    body: `
+      <div class="detail-stack">
+        <div class="detail-title">
+          <div>
+            <h2>${esc(interaction.subject)}</h2>
+            <div class="muted">${fmtDate(interaction.createdAt)} • ${esc(interaction.companyName || '-')}</div>
+          </div>
+          ${statusBadge(interaction.status)}
+        </div>
+        <div class="detail-grid">
+          <div><span class="detail-label">Contato</span><strong>${esc(interaction.contactName || 'Sem contato específico')}</strong></div>
+          <div><span class="detail-label">Canal</span><strong>${esc(channelLabels[interaction.channel] || interaction.channel || '-')}</strong></div>
+          <div><span class="detail-label">Direção</span><strong>${esc(directionLabels[interaction.direction] || interaction.direction || '-')}</strong></div>
+          <div><span class="detail-label">Responsável</span><strong>${esc(interaction.userName || '-')}</strong></div>
+          <div><span class="detail-label">Próxima ação</span><strong>${fmtDate(interaction.nextActionAt)}</strong></div>
+          <div><span class="detail-label">Resultado</span><strong>${esc(interaction.outcome || '-')}</strong></div>
+        </div>
+        <div class="detail-panel">
+          <h3>Diálogo registrado</h3>
+          <p>${esc(interaction.description)}</p>
+        </div>
+      </div>`,
+    onSubmit: async () => {}
   });
 }
 
@@ -827,7 +1030,7 @@ function openTenantModal(tenant = null) {
     body: `
       <div class="form-grid">
         <div class="field"><label>Nome da empresa *</label><input class="input" name="name" value="${esc(tenant?.name || '')}" required /></div>
-        <div class="field"><label>Domínio *</label><input class="input" name="domain" value="${esc(tenant?.domain || '')}" ${tenant ? 'disabled' : 'required'} placeholder="fgv.br" /></div>
+        <div class="field"><label>Domínio *</label><input class="input" name="domain" value="${esc(tenant?.domain || '')}" ${tenant ? 'disabled' : 'required'} placeholder="empresa.com" /></div>
         <div class="field"><label>Plano</label><select class="select" name="plan"><option value="starter" ${tenant?.plan === 'starter' ? 'selected' : ''}>Starter</option><option value="professional" ${tenant?.plan === 'professional' ? 'selected' : ''}>Professional</option><option value="enterprise" ${tenant?.plan === 'enterprise' ? 'selected' : ''}>Enterprise</option></select></div>
         <div class="field"><label>Limite de usuários</label><input class="input" type="number" name="maxUsers" value="${esc(tenant?.maxUsers || 50)}" /></div>
         <div class="field"><label>Status</label><select class="select" name="status"><option value="active" ${tenant?.status === 'active' ? 'selected' : ''}>Ativo</option><option value="paused" ${tenant?.status === 'paused' ? 'selected' : ''}>Pausado</option><option value="inactive" ${tenant?.status === 'inactive' ? 'selected' : ''}>Inativo</option></select></div>
@@ -864,7 +1067,7 @@ function viewDeveloperSettings() {
   return `${pageHeader('Configurações do Desenvolvedor', 'Configurações globais da plataforma.', '⚙')}
     <div class="grid grid-2">
       <div class="card pad"><h2>Segurança SaaS</h2><p class="muted">Esta entrega possui autenticação JWT, hash de senha, isolamento por tenant_id e validação de permissões nas rotas do backend.</p></div>
-      <div class="card pad"><h2>Banco de dados</h2><p class="muted">O sistema utiliza PostgreSQL. As tabelas são criadas automaticamente no primeiro start e os dados de demonstração da FGV são populados se o banco estiver vazio.</p></div>
+      <div class="card pad"><h2>Banco de dados</h2><p class="muted">O sistema utiliza PostgreSQL. As tabelas são criadas automaticamente no primeiro start e os dados de demonstração são populados se o banco estiver vazio.</p></div>
       <div class="card pad"><h2>Regras importantes</h2><p class="muted">Não é permitido deixar uma empresa contratante com menos de 2 administradores gerais ativos. O domínio institucional é validado no cadastro de colaboradores.</p></div>
       <div class="card pad"><h2>Próximas melhorias</h2><p class="muted">Filas Redis para e-mail/automações, refresh token, testes automatizados, importador Excel e deploy em nuvem.</p></div>
     </div>`;
