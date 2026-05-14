@@ -14,13 +14,22 @@ const LOCAL_DATABASE_URL = 'postgres://crm_user:crm_password@localhost:5432/crm_
 const isProductionRuntime = process.env.VERCEL || process.env.NODE_ENV === 'production';
 const DATABASE_URL = process.env.DATABASE_URL || (isProductionRuntime ? '' : LOCAL_DATABASE_URL);
 const isLocalDatabaseUrl = /@(localhost|127\.0\.0\.1)(:|\/)/i.test(DATABASE_URL);
+let pool;
 
-if (!DATABASE_URL) {
-  throw new Error('DATABASE_URL precisa estar configurada nas variaveis de ambiente da Vercel.');
-}
+function validateDatabaseUrl() {
+  if (!DATABASE_URL) {
+    throw Object.assign(
+      new Error('DATABASE_URL precisa estar configurada nas variaveis de ambiente da Vercel.'),
+      { status: 500 }
+    );
+  }
 
-if (isProductionRuntime && isLocalDatabaseUrl) {
-  throw new Error('DATABASE_URL da Vercel esta apontando para localhost/127.0.0.1. Configure a connection string do Supabase em Production e faca um novo deploy.');
+  if (isProductionRuntime && isLocalDatabaseUrl) {
+    throw Object.assign(
+      new Error('DATABASE_URL da Vercel esta apontando para localhost/127.0.0.1. Configure a connection string do Supabase em Production e faca um novo deploy.'),
+      { status: 500 }
+    );
+  }
 }
 
 
@@ -52,6 +61,14 @@ function maskDatabaseUrl(connectionString) {
   return String(connectionString || '').replace(/:[^:@/]+@/, ':****@');
 }
 
+function getPool() {
+  validateDatabaseUrl();
+  if (!pool) {
+    pool = new Pool(createPoolConfig(DATABASE_URL));
+  }
+  return pool;
+}
+
 function isUuid(value) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value || ''));
 }
@@ -72,7 +89,6 @@ function printDatabaseHelp(error) {
   console.error('DATABASE_URL atual:', maskDatabaseUrl(DATABASE_URL));
 }
 
-const pool = new Pool(createPoolConfig(DATABASE_URL));
 const app = express();
 let databaseReadyPromise;
 
@@ -251,7 +267,7 @@ function requireTenantUser(req, res, next) {
 }
 
 async function query(sql, params = []) {
-  return pool.query(sql, params);
+  return getPool().query(sql, params);
 }
 
 function mapCompany(row) {
