@@ -23,6 +23,7 @@ async function reset() {
     await client.query('BEGIN');
     await client.query(`
       DROP TABLE IF EXISTS audit_logs CASCADE;
+      DROP TABLE IF EXISTS crm_tasks CASCADE;
       DROP TABLE IF EXISTS client_interactions CASCADE;
       DROP TABLE IF EXISTS client_contacts CASCADE;
       DROP TABLE IF EXISTS client_companies CASCADE;

@@ -26,6 +26,29 @@ const statusLabels = {
   lost: 'Perdido'
 };
 
+const pipelineStageLabels = {
+  new: 'Novo',
+  contacted: 'Contato feito',
+  negotiation: 'Em negociação',
+  proposal: 'Proposta enviada',
+  won: 'Fechado',
+  lost: 'Perdido'
+};
+
+const taskPriorityLabels = {
+  low: 'Baixa',
+  medium: 'Média',
+  high: 'Alta',
+  urgent: 'Urgente'
+};
+
+const taskStatusLabels = {
+  open: 'Aberta',
+  in_progress: 'Em andamento',
+  done: 'Concluída',
+  canceled: 'Cancelada'
+};
+
 const channelLabels = {
   email: 'E-mail',
   phone: 'Telefone',
@@ -60,6 +83,10 @@ function fmtDate(value) {
 function fmtDateOnly(value) {
   if (!value) return '-';
   return new Date(value).toLocaleDateString('pt-BR');
+}
+function fmtMoney(value) {
+  if (value === null || value === undefined || value === '') return '-';
+  return Number(value).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 }
 function has(permission) {
   return state.user?.permissions?.includes(permission);
@@ -98,6 +125,23 @@ async function api(path, options = {}) {
   return data;
 }
 
+async function downloadText(path, filename) {
+  const headers = {};
+  if (state.token) headers.Authorization = `Bearer ${state.token}`;
+  const response = await fetch(path, { headers });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.message || 'Erro ao baixar arquivo.');
+  }
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
 function formValues(form) {
   const data = new FormData(form);
   const obj = {};
@@ -120,6 +164,18 @@ function statusBadge(status) {
 
 function roleBadge(role) {
   return `<span class="badge ${role === 'ADMIN_MASTER' || role === 'ADMIN' ? 'active' : 'prospect'}">${esc(roleLabels[role] || role)}</span>`;
+}
+
+function pipelineBadge(stage) {
+  return `<span class="badge pipeline-${esc(stage || 'new')}">${esc(pipelineStageLabels[stage] || stage || '-')}</span>`;
+}
+
+function priorityBadge(priority) {
+  return `<span class="badge priority-${esc(priority || 'medium')}">${esc(taskPriorityLabels[priority] || priority || '-')}</span>`;
+}
+
+function taskStatusBadge(status) {
+  return `<span class="badge task-${esc(status || 'open')}">${esc(taskStatusLabels[status] || status || '-')}</span>`;
 }
 
 function modal({ title, body, submitText = 'Salvar', onSubmit }) {
@@ -325,6 +381,7 @@ function tenantNav() {
   if (has('client_companies.read')) items.push(navButton('prospects', '◎', 'Prospecção'));
   if (has('client_contacts.read')) items.push(navButton('contacts', '👥', 'Contatos'));
   if (has('client_interactions.read')) items.push(navButton('interactions', '☎', 'Relacionamentos'));
+  if (has('tasks.read')) items.push(navButton('tasks', '✓', 'Tarefas'));
   const admin = [];
   if (has('users.read')) admin.push(navButton('users', '🛡', 'Usuários e Acessos'));
   if (has('audit_logs.read')) admin.push(navButton('audit', '🧾', 'Auditoria'));
@@ -366,6 +423,7 @@ async function renderTenant() {
     if (route === 'prospects') return shell(await viewProspects());
     if (route === 'contacts') return shell(await viewContacts());
     if (route === 'interactions') return shell(await viewInteractions());
+    if (route === 'tasks' && has('tasks.read')) return shell(await viewTasks());
     if (route === 'users' && has('users.read')) return shell(await viewUsers());
     if (route === 'audit' && has('audit_logs.read')) return shell(await viewAudit());
     if (route === 'settings') return shell(viewSettings());
@@ -399,21 +457,26 @@ function viewForbidden() {
 async function viewDashboard() {
   const data = await api('/api/dashboard/summary');
   setTimeout(bindDashboardEvents);
+  const pipeline = data.pipelineByStage || [];
+  const channels = data.interactionsByChannel || [];
   return `${pageHeader('Visão Geral', 'Indicadores do CRM da sua empresa contratante.', '▦')}
     <div class="grid grid-4">
       <div class="card stat"><div class="label">Empresas clientes</div><div class="value">${data.companies}</div><div class="muted small">Organizações acompanhadas</div></div>
       <div class="card stat"><div class="label">Contatos</div><div class="value">${data.contacts}</div><div class="muted small">Pessoas vinculadas às empresas</div></div>
-      <div class="card stat"><div class="label">Relacionamentos</div><div class="value">${data.interactions}</div><div class="muted small">Histórico de interações</div></div>
-      <div class="card stat"><div class="label">Próximas ações</div><div class="value">${data.nextActions}</div><div class="muted small">Follow-ups em aberto</div></div>
+      <div class="card stat"><div class="label">Tarefas abertas</div><div class="value">${data.openTasks}</div><div class="muted small">${data.overdueTasks} vencida(s)</div></div>
+      <div class="card stat"><div class="label">Sem contato recente</div><div class="value">${data.staleCompanies}</div><div class="muted small">Empresas há 30+ dias sem interação</div></div>
     </div>
     <div style="height:18px"></div>
     <div class="grid grid-2">
-      <div class="card pad"><h2>Status das empresas</h2><div style="height:12px"></div>${data.companiesByStatus.map(s => `<div style="display:flex;justify-content:space-between;padding:12px 0;border-bottom:1px solid var(--border)">${statusBadge(s.status)}<strong>${s.total}</strong></div>`).join('') || '<div class="empty">Sem dados.</div>'}</div>
-      <div class="card pad"><h2>Arquitetura desta entrega</h2><p class="muted">Esta versão usa PostgreSQL, tenant_id em tabelas críticas e permissões validadas no backend. Cada empresa contratante trabalha em um ambiente isolado.</p><button class="btn primary" id="goCompanies">Abrir Empresas Clientes</button></div>
+      <div class="card pad"><h2>Funil comercial</h2><div style="height:12px"></div>${pipeline.map(s => `<div class="metric-row">${pipelineBadge(s.stage)}<span><strong>${s.total}</strong> • ${fmtMoney(s.value)}</span></div>`).join('') || '<div class="empty">Sem dados.</div>'}</div>
+      <div class="card pad"><h2>Tarefas próximas</h2><div style="height:12px"></div>${(data.recentTasks || []).map(t => `<div class="metric-row"><span><strong>${esc(t.title)}</strong><div class="muted small">${esc(t.companyName || 'Sem empresa')} • ${fmtDate(t.dueAt)}</div></span>${taskStatusBadge(t.status)}</div>`).join('') || '<div class="empty">Sem tarefas em aberto.</div>'}<div style="height:12px"></div><button class="btn primary" id="goTasks">Abrir tarefas</button></div>
+      <div class="card pad"><h2>Status das empresas</h2><div style="height:12px"></div>${data.companiesByStatus.map(s => `<div class="metric-row">${statusBadge(s.status)}<strong>${s.total}</strong></div>`).join('') || '<div class="empty">Sem dados.</div>'}</div>
+      <div class="card pad"><h2>Interações por canal</h2><div style="height:12px"></div>${channels.map(s => `<div class="metric-row"><span class="badge prospect">${esc(channelLabels[s.channel] || s.channel)}</span><strong>${s.total}</strong></div>`).join('') || '<div class="empty">Sem dados.</div>'}<div style="height:12px"></div><button class="btn" id="goCompanies">Abrir Empresas Clientes</button></div>
     </div>`;
 }
 function bindDashboardEvents() {
   $('#goCompanies')?.addEventListener('click', () => navigate('companies'));
+  $('#goTasks')?.addEventListener('click', () => navigate('tasks'));
 }
 
 async function viewCompanies() {
@@ -422,7 +485,7 @@ async function viewCompanies() {
   state.cache.companies = companies;
   state.cache.users = users;
   setTimeout(bindCompanyEvents);
-  const actions = has('client_companies.create') ? `<button class="btn primary" id="newCompany">+ Nova empresa cliente</button>` : '';
+  const actions = `${has('exports.read') ? '<button class="btn" id="exportCompanies">Exportar CSV</button>' : ''}${has('imports.create') ? '<button class="btn" id="importCompanies">Importar CSV</button>' : ''}${has('client_companies.create') ? '<button class="btn primary" id="newCompany">+ Nova empresa cliente</button>' : ''}`;
   return `${pageHeader('Empresas Clientes', 'Organizações atendidas, possíveis clientes ou antigos clientes.', '🏢', actions)}
     <div class="tabs">
       <button class="tab active">Empresas</button>
@@ -434,6 +497,7 @@ async function viewCompanies() {
       <div class="filters">
         <input class="input" style="width:280px" id="companySearch" placeholder="Buscar por nome, CNPJ, observação..." />
         <select class="select" id="companyStatus" style="width:180px"><option value="">Todos os status</option><option value="active">Ativo</option><option value="prospect">Prospect</option><option value="former">Antigo cliente</option><option value="inactive">Inativo</option></select>
+        <select class="select" id="companyPipeline" style="width:190px"><option value="">Todas as etapas</option>${Object.entries(pipelineStageLabels).map(([key, label]) => `<option value="${key}">${esc(label)}</option>`).join('')}</select>
       </div>
       <div class="muted small">Clique em uma linha para abrir a visão detalhada.</div>
     </div>
@@ -466,7 +530,7 @@ async function viewProspects() {
       </div>
       <div class="muted small">${prospects.length} empresa(s) em prospecção</div>
     </div>
-    <div id="prospectArea">${prospectsTable(prospects)}</div>`;
+    <div id="prospectArea">${prospectsBoard(prospects)}</div>`;
 }
 
 function prospectsTable(prospects) {
@@ -488,6 +552,44 @@ function prospectsTable(prospects) {
   </tbody></table></div>`;
 }
 
+function prospectsBoard(prospects) {
+  if (!prospects.length) return '<div class="card empty">Nenhuma empresa em prospecção cadastrada.</div>';
+  const stages = Object.keys(pipelineStageLabels);
+  return `<div class="pipeline-board">
+    ${stages.map(stage => {
+      const items = prospects.filter(c => (c.pipelineStage || 'new') === stage);
+      const total = items.reduce((sum, c) => sum + Number(c.expectedValue || 0), 0);
+      return `<section class="pipeline-column">
+        <header><strong>${esc(pipelineStageLabels[stage])}</strong><span>${items.length} • ${fmtMoney(total)}</span></header>
+        <div class="pipeline-list">
+          ${items.map(c => `<article class="pipeline-card clickable" data-company-detail="${c.id}">
+            <div class="pipeline-card-head"><strong>${esc(c.name)}</strong>${statusBadge(c.status)}</div>
+            <div class="muted small">${esc(c.industry || c.source || 'Sem contexto')}</div>
+            <div class="pipeline-meta"><span>${fmtMoney(c.expectedValue)}</span><span>${fmtDateOnly(c.expectedCloseDate || c.nextActionAt)}</span></div>
+            <div class="muted small">Responsável: ${esc(c.ownerName || '-')}</div>
+            <div class="split-actions">
+              ${has('client_companies.update') ? `<button class="btn" data-move-prospect="${c.id}" data-stage="${previousPipelineStage(stage)}" ${previousPipelineStage(stage) ? '' : 'disabled'}>←</button><button class="btn" data-move-prospect="${c.id}" data-stage="${nextPipelineStage(stage)}" ${nextPipelineStage(stage) ? '' : 'disabled'}>→</button>` : ''}
+              ${has('client_interactions.create') ? `<button class="btn primary" data-new-prospect-interaction="${c.id}">Relacionar</button>` : ''}
+            </div>
+          </article>`).join('') || '<div class="empty mini">Sem empresas nesta etapa.</div>'}
+        </div>
+      </section>`;
+    }).join('')}
+  </div>`;
+}
+
+function previousPipelineStage(stage) {
+  const stages = Object.keys(pipelineStageLabels);
+  const index = stages.indexOf(stage);
+  return index > 0 ? stages[index - 1] : '';
+}
+
+function nextPipelineStage(stage) {
+  const stages = Object.keys(pipelineStageLabels);
+  const index = stages.indexOf(stage);
+  return index >= 0 && index < stages.length - 1 ? stages[index + 1] : '';
+}
+
 function bindProspectEvents() {
   $all('[data-route]').forEach(btn => btn.addEventListener('click', () => navigate(btn.dataset.route)));
   $('#newProspect')?.addEventListener('click', () => openCompanyModal({ status: 'prospect' }));
@@ -505,6 +607,18 @@ function bindProspectRowActions() {
     event.stopPropagation();
     openInteractionModal({ companyId: btn.dataset.newProspectInteraction });
   }));
+  $all('[data-move-prospect]').forEach(btn => btn.addEventListener('click', async event => {
+    event.stopPropagation();
+    if (!btn.dataset.stage) return;
+    try {
+      await api(`/api/client-companies/${btn.dataset.moveProspect}`, { method: 'PUT', body: JSON.stringify({ pipelineStage: btn.dataset.stage }) });
+      setAlert('Etapa do funil atualizada.');
+      await render();
+    } catch (error) {
+      setAlert(error.message, 'error');
+      await render();
+    }
+  }));
 }
 
 function filterProspects() {
@@ -513,17 +627,19 @@ function filterProspects() {
     const text = [c.name, c.tradeName, c.cnpj, c.industry, c.source, c.notes, (c.tags || []).join(' ')].join(' ').toLowerCase();
     return !q || text.includes(q);
   });
-  $('#prospectArea').innerHTML = prospectsTable(list);
+  $('#prospectArea').innerHTML = prospectsBoard(list);
   bindProspectRowActions();
 }
 
 function companiesTable(companies) {
   if (!companies.length) return '<div class="card empty">Nenhuma empresa cliente cadastrada.</div>';
-  return `<div class="table-wrap"><table><thead><tr><th>Empresa</th><th>Ramo</th><th>Status</th><th>Contatos</th><th>Última interação</th><th>Próxima ação</th><th>Responsável</th><th>Tags</th></tr></thead><tbody>
+  return `<div class="table-wrap"><table><thead><tr><th>Empresa</th><th>Ramo</th><th>Status</th><th>Funil</th><th>Valor</th><th>Contatos</th><th>Última interação</th><th>Próxima ação</th><th>Responsável</th><th>Tags</th></tr></thead><tbody>
     ${companies.map(c => `<tr class="clickable" data-company-detail="${c.id}">
       <td><strong>${esc(c.name)}</strong><div class="muted small">${esc(c.tradeName || c.cnpj || c.source || '')}</div></td>
       <td>${esc(c.industry || '-')}</td>
       <td>${statusBadge(c.status)}</td>
+      <td>${pipelineBadge(c.pipelineStage)}</td>
+      <td>${fmtMoney(c.expectedValue)}</td>
       <td><strong>${c.contactsCount}</strong></td>
       <td>${fmtDateOnly(c.lastInteractionAt)}</td>
       <td>${fmtDateOnly(c.nextActionAt)}</td>
@@ -536,16 +652,27 @@ function companiesTable(companies) {
 function bindCompanyEvents() {
   $all('[data-route]').forEach(btn => btn.addEventListener('click', () => navigate(btn.dataset.route)));
   $('#newCompany')?.addEventListener('click', () => openCompanyModal());
+  $('#exportCompanies')?.addEventListener('click', async () => {
+    try {
+      await downloadText('/api/client-companies/export', 'empresas-clientes.csv');
+    } catch (error) {
+      setAlert(error.message, 'error');
+      await render();
+    }
+  });
+  $('#importCompanies')?.addEventListener('click', () => openImportCompaniesModal());
   $('#companySearch')?.addEventListener('input', filterCompanies);
   $('#companyStatus')?.addEventListener('change', filterCompanies);
+  $('#companyPipeline')?.addEventListener('change', filterCompanies);
   $all('[data-company-detail]').forEach(row => row.addEventListener('click', () => openCompanyDetail(row.dataset.companyDetail)));
 }
 function filterCompanies() {
   const q = $('#companySearch').value.toLowerCase();
   const status = $('#companyStatus').value;
+  const pipelineStage = $('#companyPipeline')?.value || '';
   const list = state.cache.companies.filter(c => {
     const text = [c.name, c.tradeName, c.cnpj, c.industry, c.notes, (c.tags || []).join(' ')].join(' ').toLowerCase();
-    return (!q || text.includes(q)) && (!status || c.status === status);
+    return (!q || text.includes(q)) && (!status || c.status === status) && (!pipelineStage || c.pipelineStage === pipelineStage);
   });
   $('#companyArea').innerHTML = companiesTable(list);
   $all('[data-company-detail]').forEach(row => row.addEventListener('click', () => openCompanyDetail(row.dataset.companyDetail)));
@@ -563,12 +690,16 @@ function openCompanyModal(company = null) {
         <div class="field"><label>CNPJ</label><input class="input" name="cnpj" value="${esc(company?.cnpj || '')}" /></div>
         <div class="field"><label>Ramo de atividade</label><input class="input" name="industry" value="${esc(company?.industry || '')}" placeholder="Varejo / Supermercado" /></div>
         <div class="field"><label>Status</label><select class="select" name="status"><option value="prospect" ${company?.status === 'prospect' ? 'selected' : ''}>Prospect</option><option value="active" ${company?.status === 'active' ? 'selected' : ''}>Ativo</option><option value="former" ${company?.status === 'former' ? 'selected' : ''}>Antigo cliente</option><option value="inactive" ${company?.status === 'inactive' ? 'selected' : ''}>Inativo</option></select></div>
+        <div class="field"><label>Etapa do funil</label><select class="select" name="pipelineStage">${Object.entries(pipelineStageLabels).map(([key, label]) => `<option value="${key}" ${(company?.pipelineStage || 'new') === key ? 'selected' : ''}>${esc(label)}</option>`).join('')}</select></div>
+        <div class="field"><label>Valor estimado</label><input class="input" name="expectedValue" type="number" step="0.01" min="0" value="${esc(company?.expectedValue || '')}" /></div>
+        <div class="field"><label>Previsão de fechamento</label><input class="input" name="expectedCloseDate" type="date" value="${company?.expectedCloseDate ? String(company.expectedCloseDate).slice(0, 10) : ''}" /></div>
         <div class="field"><label>Origem</label><input class="input" name="source" value="${esc(company?.source || '')}" placeholder="Coleta de preços IBRE" /></div>
         <div class="field"><label>Cidade</label><input class="input" name="city" value="${esc(company?.city || '')}" /></div>
         <div class="field"><label>Estado</label><input class="input" name="state" value="${esc(company?.state || '')}" /></div>
         <div class="field full"><label>Endereço</label><input class="input" name="address" value="${esc(company?.address || '')}" /></div>
         <div class="field"><label>Responsável interno</label><select class="select" name="ownerUserId"><option value="">Usuário atual</option>${usersOptions}</select></div>
         <div class="field"><label>Tags separadas por vírgula</label><input class="input" name="tags" value="${esc((company?.tags || []).join(', '))}" /></div>
+        <div class="field full"><label>Motivo de perda</label><input class="input" name="lostReason" value="${esc(company?.lostReason || '')}" placeholder="Preencha se a oportunidade foi perdida" /></div>
         <div class="field full"><label>Observações</label><textarea name="notes">${esc(company?.notes || '')}</textarea></div>
       </div>`,
     onSubmit: async values => {
@@ -576,6 +707,24 @@ function openCompanyModal(company = null) {
       if (!values.ownerUserId) delete values.ownerUserId;
       await api(isEdit ? `/api/client-companies/${company.id}` : '/api/client-companies', { method: isEdit ? 'PUT' : 'POST', body: JSON.stringify(values) });
       setAlert(isEdit ? 'Empresa atualizada.' : 'Empresa cliente cadastrada.');
+    }
+  });
+}
+
+function openImportCompaniesModal() {
+  modal({
+    title: 'Importar empresas por CSV',
+    submitText: 'Importar empresas',
+    body: `
+      <div class="detail-stack">
+        <div class="alert">
+          Cabeçalhos aceitos: <code>name</code>, <code>tradeName</code>, <code>cnpj</code>, <code>industry</code>, <code>status</code>, <code>pipelineStage</code>, <code>expectedValue</code>, <code>source</code>, <code>city</code>, <code>state</code>, <code>notes</code>, <code>tags</code>.
+        </div>
+        <div class="field full"><label>Conteúdo CSV</label><textarea name="csv" style="min-height:220px" placeholder="name;industry;status;pipelineStage;source&#10;Empresa Exemplo;Tecnologia;prospect;new;Indicação" required></textarea></div>
+      </div>`,
+    onSubmit: async values => {
+      const result = await api('/api/client-companies/import', { method: 'POST', body: JSON.stringify(values) });
+      setAlert(`${result.imported} empresa(s) importada(s). ${result.skipped} linha(s) ignorada(s).`);
     }
   });
 }
@@ -594,6 +743,8 @@ async function openCompanyDetail(companyId) {
           <div class="detail-title"><div><h2>${esc(company.name)}</h2><div class="muted">${esc(company.industry || 'Sem ramo informado')}</div></div>${statusBadge(company.status)}</div>
           <div style="height:14px"></div>
           <p><strong>Origem:</strong> ${esc(company.source || '-')}</p>
+          <p><strong>Funil:</strong> ${pipelineBadge(company.pipelineStage)} • ${fmtMoney(company.expectedValue)}</p>
+          <p><strong>Previsão de fechamento:</strong> ${fmtDateOnly(company.expectedCloseDate)}</p>
           <p><strong>CNPJ:</strong> ${esc(company.cnpj || '-')}</p>
           <p><strong>Local:</strong> ${esc([company.city, company.state].filter(Boolean).join(' / ') || '-')}</p>
           <p><strong>Responsável:</strong> ${esc(company.ownerName || '-')}</p>
@@ -603,6 +754,7 @@ async function openCompanyDetail(companyId) {
           <div class="split-actions">
             ${has('client_companies.update') ? `<button class="btn" type="button" id="editCompanyFromDetail">Editar empresa</button>` : ''}
             ${has('client_contacts.create') ? `<button class="btn primary" type="button" id="newContactFromDetail">Novo contato</button>` : ''}
+            ${has('tasks.create') ? `<button class="btn" type="button" id="newTaskFromCompanyDetail">Nova tarefa</button>` : ''}
           </div>
         </div>
         <div class="grid">
@@ -615,6 +767,7 @@ async function openCompanyDetail(companyId) {
   setTimeout(() => {
     $('#editCompanyFromDetail')?.addEventListener('click', () => { $('.modal-backdrop')?.remove(); openCompanyModal(company); });
     $('#newContactFromDetail')?.addEventListener('click', () => { $('.modal-backdrop')?.remove(); openContactModal({ companyId: company.id }); });
+    $('#newTaskFromCompanyDetail')?.addEventListener('click', () => { $('.modal-backdrop')?.remove(); openTaskModal({ companyId: company.id }); });
   });
 }
 
@@ -857,6 +1010,120 @@ function openInteractionDetail(interactionId) {
         </div>
       </div>`,
     onSubmit: async () => {}
+  });
+}
+
+async function viewTasks() {
+  const [tasks, companies, contacts, users] = await Promise.all([
+    api('/api/tasks'),
+    api('/api/client-companies'),
+    has('client_contacts.read') ? api('/api/client-contacts').catch(() => []) : Promise.resolve([]),
+    has('users.read') ? api('/api/users').catch(() => []) : Promise.resolve([])
+  ]);
+  state.cache.tasks = tasks;
+  state.cache.companies = companies;
+  state.cache.contacts = contacts;
+  state.cache.users = users;
+  setTimeout(bindTaskEvents);
+  const actions = has('tasks.create') ? `<button class="btn primary" id="newTask">+ Nova tarefa</button>` : '';
+  return `${pageHeader('Tarefas e Lembretes', 'Pendências vinculadas a empresas, contatos e responsáveis.', '✓', actions)}
+    <div class="tabs"><button class="tab" data-route="companies">Empresas</button><button class="tab" data-route="prospects">Prospecção</button><button class="tab" data-route="interactions">Relacionamentos</button><button class="tab active">Tarefas</button></div>
+    <div class="toolbar">
+      <div class="filters">
+        <input class="input" id="taskSearch" style="width:260px" placeholder="Buscar tarefa, empresa..." />
+        <select class="select" id="taskStatus" style="width:180px"><option value="">Todos os status</option>${Object.entries(taskStatusLabels).map(([key, label]) => `<option value="${key}">${esc(label)}</option>`).join('')}</select>
+        <select class="select" id="taskCompany" style="width:240px"><option value="">Todas as empresas</option>${companies.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select>
+      </div>
+    </div>
+    <div id="taskArea">${tasksTable(tasks)}</div>`;
+}
+
+function tasksTable(tasks) {
+  if (!tasks.length) return '<div class="card empty">Nenhuma tarefa cadastrada.</div>';
+  return `<div class="table-wrap"><table><thead><tr><th>Tarefa</th><th>Empresa</th><th>Responsável</th><th>Prazo</th><th>Prioridade</th><th>Status</th><th>Ações</th></tr></thead><tbody>
+    ${tasks.map(t => `<tr class="clickable" data-task-detail="${t.id}">
+      <td><strong>${esc(t.title)}</strong><div class="muted small">${esc(t.description || '-')}</div></td>
+      <td>${esc(t.companyName || '-')}<div class="muted small">${esc(t.contactName || '')}</div></td>
+      <td>${esc(t.assignedUserName || '-')}</td>
+      <td>${fmtDate(t.dueAt)}</td>
+      <td>${priorityBadge(t.priority)}</td>
+      <td>${taskStatusBadge(t.status)}</td>
+      <td><div class="split-actions">
+        ${has('tasks.update') ? `<button class="btn" data-edit-task="${t.id}">Editar</button><button class="btn success" data-complete-task="${t.id}" ${t.status === 'done' ? 'disabled' : ''}>Concluir</button>` : ''}
+        ${has('tasks.delete') ? `<button class="btn danger" data-delete-task="${t.id}">Remover</button>` : ''}
+      </div></td>
+    </tr>`).join('')}
+  </tbody></table></div>`;
+}
+
+function bindTaskEvents() {
+  $all('[data-route]').forEach(btn => btn.addEventListener('click', () => navigate(btn.dataset.route)));
+  $('#newTask')?.addEventListener('click', () => openTaskModal());
+  $('#taskSearch')?.addEventListener('input', filterTasks);
+  $('#taskStatus')?.addEventListener('change', filterTasks);
+  $('#taskCompany')?.addEventListener('change', filterTasks);
+  bindTaskRowActions();
+}
+
+function bindTaskRowActions() {
+  $all('[data-edit-task]').forEach(btn => btn.addEventListener('click', event => {
+    event.stopPropagation();
+    openTaskModal(state.cache.tasks.find(t => t.id === btn.dataset.editTask));
+  }));
+  $all('[data-complete-task]').forEach(btn => btn.addEventListener('click', async event => {
+    event.stopPropagation();
+    await api(`/api/tasks/${btn.dataset.completeTask}`, { method: 'PUT', body: JSON.stringify({ status: 'done' }) });
+    setAlert('Tarefa concluída.');
+    await render();
+  }));
+  $all('[data-delete-task]').forEach(btn => btn.addEventListener('click', async event => {
+    event.stopPropagation();
+    if (!confirm('Remover esta tarefa?')) return;
+    await api(`/api/tasks/${btn.dataset.deleteTask}`, { method: 'DELETE' });
+    setAlert('Tarefa removida.');
+    await render();
+  }));
+}
+
+function filterTasks() {
+  const q = $('#taskSearch').value.toLowerCase();
+  const status = $('#taskStatus').value;
+  const companyId = $('#taskCompany').value;
+  const list = state.cache.tasks.filter(t => {
+    const text = [t.title, t.description, t.companyName, t.contactName, t.assignedUserName].join(' ').toLowerCase();
+    return (!q || text.includes(q)) && (!status || t.status === status) && (!companyId || t.companyId === companyId);
+  });
+  $('#taskArea').innerHTML = tasksTable(list);
+  bindTaskRowActions();
+}
+
+function openTaskModal(task = {}) {
+  const isEdit = Boolean(task?.id);
+  const companies = state.cache.companies || [];
+  const contacts = state.cache.contacts || [];
+  const users = state.cache.users || [];
+  modal({
+    title: isEdit ? 'Editar tarefa' : 'Nova tarefa',
+    submitText: isEdit ? 'Salvar alterações' : 'Cadastrar tarefa',
+    body: `
+      <div class="form-grid">
+        <div class="field full"><label>Título *</label><input class="input" name="title" value="${esc(task?.title || '')}" required /></div>
+        <div class="field"><label>Empresa</label><select class="select" name="companyId"><option value="">Sem empresa</option>${companies.map(c => `<option value="${c.id}" ${task?.companyId === c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select></div>
+        <div class="field"><label>Contato</label><select class="select" name="contactId"><option value="">Sem contato</option>${contacts.map(c => `<option value="${c.id}" ${task?.contactId === c.id ? 'selected' : ''}>${esc(c.name)} — ${esc(c.companyName || '')}</option>`).join('')}</select></div>
+        <div class="field"><label>Responsável</label><select class="select" name="assignedUserId"><option value="">Eu mesmo</option>${users.map(u => `<option value="${u.id}" ${task?.assignedUserId === u.id ? 'selected' : ''}>${esc(u.name)}</option>`).join('')}</select></div>
+        <div class="field"><label>Prazo</label><input class="input" type="datetime-local" name="dueAt" value="${task?.dueAt ? String(task.dueAt).slice(0, 16) : ''}" /></div>
+        <div class="field"><label>Prioridade</label><select class="select" name="priority">${Object.entries(taskPriorityLabels).map(([key, label]) => `<option value="${key}" ${(task?.priority || 'medium') === key ? 'selected' : ''}>${esc(label)}</option>`).join('')}</select></div>
+        <div class="field"><label>Status</label><select class="select" name="status">${Object.entries(taskStatusLabels).map(([key, label]) => `<option value="${key}" ${(task?.status || 'open') === key ? 'selected' : ''}>${esc(label)}</option>`).join('')}</select></div>
+        <div class="field full"><label>Descrição</label><textarea name="description">${esc(task?.description || '')}</textarea></div>
+      </div>`,
+    onSubmit: async values => {
+      if (!values.companyId) delete values.companyId;
+      if (!values.contactId) delete values.contactId;
+      if (!values.assignedUserId) delete values.assignedUserId;
+      if (!values.dueAt) delete values.dueAt;
+      await api(isEdit ? `/api/tasks/${task.id}` : '/api/tasks', { method: isEdit ? 'PUT' : 'POST', body: JSON.stringify(values) });
+      setAlert(isEdit ? 'Tarefa atualizada.' : 'Tarefa cadastrada.');
+    }
   });
 }
 

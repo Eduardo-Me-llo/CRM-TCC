@@ -12,6 +12,23 @@ API REST Express
 PostgreSQL
 ```
 
+## Organização MVC do backend
+
+O backend agora fica em `src/` com uma divisão MVC para separar responsabilidades:
+
+```text
+src/app.js              Configura Express, middlewares, arquivos estáticos e rotas
+src/config/             Ambiente e conexão PostgreSQL
+src/controllers/        Recebe req/res, valida entrada básica e coordena resposta
+src/models/             Consultas SQL e persistência por domínio
+src/routes/             URLs REST, autenticação, permissões e controller
+src/middlewares/        Auth JWT, RBAC, banco pronto e tratamento de erros
+src/services/           Auditoria, CSV, inicialização do banco e regras compartilhadas
+src/utils/              Helpers pequenos de HTTP e normalização
+```
+
+O `server.js` permanece como ponto de entrada fino: carrega `.env`, inicializa o banco e sobe o servidor.
+
 ## Multiempresa
 
 O sistema usa o conceito de `tenant` para representar cada empresa contratante do CRM.

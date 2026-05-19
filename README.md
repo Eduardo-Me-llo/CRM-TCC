@@ -17,6 +17,10 @@ Esta versão substitui o MVP anterior por uma base mais profissional e vendável
 8. Auditoria de ações principais
 9. Isolamento de dados por `tenant_id`
 10. Regra de segurança: cada empresa precisa manter pelo menos 2 administradores gerais ativos
+11. Funil de prospecção com etapas comerciais
+12. Tarefas e lembretes vinculados a empresas/contatos
+13. Dashboard com pipeline, tarefas vencidas e clientes sem contato recente
+14. Importação e exportação CSV de empresas clientes
 
 ## Tecnologias
 
@@ -176,6 +180,7 @@ tenant_domains
 client_companies
 client_contacts
 client_interactions
+crm_tasks
 audit_logs
 ```
 
@@ -186,9 +191,29 @@ Empresa contratante do CRM tenant
   ├── Usuários
   ├── Empresas clientes
   │    ├── Contatos
-  │    └── Relacionamentos
+  │    ├── Relacionamentos
+  │    └── Tarefas e lembretes
   └── Logs de auditoria
 ```
+
+## Arquitetura MVC
+
+O backend foi organizado em MVC para facilitar evolução e manutenção:
+
+```text
+src/
+  app.js
+  config/        conexão e variáveis de ambiente
+  constants/     papéis, permissões e enums
+  controllers/   entrada HTTP e respostas da API
+  middlewares/   autenticação, permissões, banco pronto e erros
+  models/        consultas SQL por domínio
+  routes/        definição das rotas REST
+  services/      auditoria, CSV, seed/init do banco e regras compartilhadas
+  utils/         normalização e helpers HTTP
+```
+
+O `server.js` ficou apenas como ponto de entrada: carrega `.env`, inicializa o banco e sobe o Express.
 
 ## Rodar sem Docker
 
