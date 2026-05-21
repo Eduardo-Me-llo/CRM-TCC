@@ -9,7 +9,7 @@ async function list(tenantId, { companyId = '', q = '', status = '' } = {}) {
        LEFT JOIN client_interactions i ON i.contact_id = ct.id
       WHERE ct.tenant_id = $1
         AND ($2 = '' OR ct.company_id::text = $2)
-        AND ($3 = '' OR ct.name ILIKE '%' || $3 || '%' OR ct.email ILIKE '%' || $3 || '%' OR ct.phone ILIKE '%' || $3 || '%' OR ct.whatsapp ILIKE '%' || $3 || '%')
+        AND ($3 = '' OR ct.name ILIKE '%' || $3 || '%' OR ct.email ILIKE '%' || $3 || '%' OR ct.phone ILIKE '%' || $3 || '%' OR ct.whatsapp ILIKE '%' || $3 || '%' OR ct.custom_fields::text ILIKE '%' || $3 || '%')
         AND ($4 = '' OR ct.status = $4)
       GROUP BY ct.id, c.name
       ORDER BY ct.updated_at DESC`,
@@ -31,10 +31,10 @@ async function existsForCompany(tenantId, contactId, companyId) {
 async function create(tenantId, data) {
   const result = await query(
     `INSERT INTO client_contacts
-      (tenant_id, company_id, name, position, email, phone, whatsapp, preferred_channel, status, notes)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+      (tenant_id, company_id, name, position, email, phone, whatsapp, preferred_channel, status, notes, custom_fields)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
      RETURNING *`,
-    [tenantId, data.companyId, data.name, data.position || null, data.email || null, data.phone || null, data.whatsapp || null, data.preferredChannel, data.status, data.notes || null]
+    [tenantId, data.companyId, data.name, data.position || null, data.email || null, data.phone || null, data.whatsapp || null, data.preferredChannel, data.status, data.notes || null, JSON.stringify(data.customFields || {})]
   );
   return mapContact(result.rows[0]);
 }
@@ -50,10 +50,11 @@ async function update(tenantId, contactId, data) {
             preferred_channel = COALESCE($6, preferred_channel),
             status = COALESCE($7, status),
             notes = COALESCE($8, notes),
+            custom_fields = COALESCE($9, custom_fields),
             updated_at = now()
-      WHERE id = $9 AND tenant_id = $10
+      WHERE id = $10 AND tenant_id = $11
       RETURNING *`,
-    [data.name || null, data.position || null, data.email || null, data.phone || null, data.whatsapp || null, data.preferredChannel || null, data.status || null, data.notes || null, contactId, tenantId]
+    [data.name || null, data.position || null, data.email || null, data.phone || null, data.whatsapp || null, data.preferredChannel || null, data.status || null, data.notes || null, data.customFields == null ? null : JSON.stringify(data.customFields), contactId, tenantId]
   );
   return result.rows[0] ? mapContact(result.rows[0]) : null;
 }

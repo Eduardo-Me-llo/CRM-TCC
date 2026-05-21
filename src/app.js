@@ -21,6 +21,7 @@ app.use('/api/users', require('./routes/user.routes'));
 app.use('/api/client-companies', require('./routes/company.routes'));
 app.use('/api/client-contacts', require('./routes/contact.routes'));
 app.use('/api/client-interactions', require('./routes/interaction.routes'));
+app.use('/api/custom-fields', require('./routes/custom-field.routes'));
 app.use('/api/tasks', require('./routes/task.routes'));
 app.use('/api/audit-logs', require('./routes/audit.routes'));
 app.use('/api/roles', require('./routes/role.routes'));

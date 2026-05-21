@@ -16,6 +16,7 @@ function mapCompany(row) {
     address: row.address,
     notes: row.notes,
     tags: row.tags || [],
+    customFields: row.custom_fields || {},
     ownerUserId: row.owner_user_id,
     ownerName: row.owner_name,
     contactsCount: Number(row.contacts_count || 0),
@@ -40,6 +41,7 @@ function mapContact(row) {
     preferredChannel: row.preferred_channel,
     status: row.status,
     notes: row.notes,
+    customFields: row.custom_fields || {},
     lastInteractionAt: row.last_interaction_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at
@@ -62,6 +64,7 @@ function mapInteraction(row) {
     outcome: row.outcome,
     nextActionAt: row.next_action_at,
     status: row.status,
+    customFields: row.custom_fields || {},
     createdAt: row.created_at,
     updatedAt: row.updated_at
   };

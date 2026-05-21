@@ -14,7 +14,7 @@ async function list(tenantId, { q = '', status = '', industry = '', pipelineStag
        LEFT JOIN client_contacts ct ON ct.company_id = c.id
        LEFT JOIN client_interactions i ON i.company_id = c.id
       WHERE c.tenant_id = $1
-        AND ($2 = '' OR c.name ILIKE '%' || $2 || '%' OR c.trade_name ILIKE '%' || $2 || '%' OR c.cnpj ILIKE '%' || $2 || '%' OR c.notes ILIKE '%' || $2 || '%')
+        AND ($2 = '' OR c.name ILIKE '%' || $2 || '%' OR c.trade_name ILIKE '%' || $2 || '%' OR c.cnpj ILIKE '%' || $2 || '%' OR c.notes ILIKE '%' || $2 || '%' OR c.custom_fields::text ILIKE '%' || $2 || '%')
         AND ($3 = '' OR c.status = $3)
         AND ($4 = '' OR c.industry ILIKE '%' || $4 || '%')
         AND ($5 = '' OR c.pipeline_stage = $5)
@@ -63,10 +63,10 @@ async function exists(tenantId, companyId) {
 async function create(tenantId, userId, data) {
   const result = await query(
     `INSERT INTO client_companies
-      (tenant_id, name, trade_name, cnpj, industry, status, pipeline_stage, expected_value, expected_close_date, lost_reason, source, owner_user_id, city, state, address, notes, tags)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+      (tenant_id, name, trade_name, cnpj, industry, status, pipeline_stage, expected_value, expected_close_date, lost_reason, source, owner_user_id, city, state, address, notes, tags, custom_fields)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
      RETURNING *`,
-    [tenantId, data.name, data.tradeName || null, data.cnpj || null, data.industry || null, data.status, data.pipelineStage, data.expectedValue, data.expectedCloseDate || null, data.lostReason || null, data.source || null, data.ownerUserId || userId, data.city || null, data.state || null, data.address || null, data.notes || null, JSON.stringify(data.tags || [])]
+    [tenantId, data.name, data.tradeName || null, data.cnpj || null, data.industry || null, data.status, data.pipelineStage, data.expectedValue, data.expectedCloseDate || null, data.lostReason || null, data.source || null, data.ownerUserId || userId, data.city || null, data.state || null, data.address || null, data.notes || null, JSON.stringify(data.tags || []), JSON.stringify(data.customFields || {})]
   );
   return mapCompany({ ...result.rows[0], contacts_count: 0, interactions_count: 0 });
 }
@@ -99,10 +99,11 @@ async function update(tenantId, companyId, data) {
             address = COALESCE($14, address),
             notes = COALESCE($15, notes),
             tags = COALESCE($16, tags),
+            custom_fields = COALESCE($17, custom_fields),
             updated_at = now()
-      WHERE id = $17 AND tenant_id = $18
+      WHERE id = $18 AND tenant_id = $19
       RETURNING *`,
-    [data.name || null, data.tradeName || null, data.cnpj || null, data.industry || null, data.status || null, data.pipelineStage || null, data.expectedValue === undefined ? null : data.expectedValue, data.expectedCloseDate || null, data.lostReason || null, data.source || null, data.ownerUserId || null, data.city || null, data.state || null, data.address || null, data.notes || null, data.tags == null ? null : JSON.stringify(data.tags), companyId, tenantId]
+    [data.name || null, data.tradeName || null, data.cnpj || null, data.industry || null, data.status || null, data.pipelineStage || null, data.expectedValue === undefined ? null : data.expectedValue, data.expectedCloseDate || null, data.lostReason || null, data.source || null, data.ownerUserId || null, data.city || null, data.state || null, data.address || null, data.notes || null, data.tags == null ? null : JSON.stringify(data.tags), data.customFields == null ? null : JSON.stringify(data.customFields), companyId, tenantId]
   );
   return result.rows[0] ? mapCompany(result.rows[0]) : null;
 }

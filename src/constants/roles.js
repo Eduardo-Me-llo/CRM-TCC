@@ -45,6 +45,7 @@ const ROLE_PERMISSIONS = {
     'users.create',
     'users.update',
     'users.delete',
+    'custom_fields.manage',
     'settings.read',
     'settings.update',
     'audit_logs.read'
@@ -68,9 +69,6 @@ const ROLE_PERMISSIONS = {
     'tasks.delete',
     'imports.create',
     'exports.read',
-    'users.read',
-    'users.create',
-    'users.update',
     'settings.read',
     'audit_logs.read'
   ],
@@ -90,7 +88,6 @@ const ROLE_PERMISSIONS = {
     'tasks.update',
     'imports.create',
     'exports.read',
-    'users.read',
     'settings.read'
   ],
   OPERATOR: [

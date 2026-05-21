@@ -7,10 +7,10 @@ async function list(req, res) {
 }
 
 async function create(req, res) {
-  const { companyId, name, position, email, phone, whatsapp, preferredChannel = 'email', status = 'active', notes } = req.body;
+  const { companyId, name, position, email, phone, whatsapp, preferredChannel = 'email', status = 'active', notes, customFields = {} } = req.body;
   if (!companyId || !name) return res.status(400).json({ message: 'Empresa cliente e nome do contato são obrigatórios.' });
   if (!(await companyModel.exists(req.user.tenantId, companyId))) return res.status(404).json({ message: 'Empresa cliente não encontrada.' });
-  const result = await contactModel.create(req.user.tenantId, { companyId, name, position, email, phone, whatsapp, preferredChannel, status, notes });
+  const result = await contactModel.create(req.user.tenantId, { companyId, name, position, email, phone, whatsapp, preferredChannel, status, notes, customFields });
   await createAuditLog({ tenantId: req.user.tenantId, userId: req.user.id, action: 'client_contact.created', entityType: 'client_contact', entityId: result.id, metadata: { name, companyId } });
   res.status(201).json(result);
 }

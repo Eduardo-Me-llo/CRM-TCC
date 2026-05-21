@@ -11,7 +11,8 @@ function normalizeCompanyCreatePayload(body) {
     status: body.status || 'prospect',
     pipelineStage: normalizeEnum(body.pipelineStage || 'new', PIPELINE_STAGES, 'new'),
     expectedValue: parseMoney(body.expectedValue),
-    tags: Array.isArray(body.tags) ? body.tags : []
+    tags: Array.isArray(body.tags) ? body.tags : [],
+    customFields: body.customFields && typeof body.customFields === 'object' ? body.customFields : {}
   };
 }
 
@@ -20,7 +21,8 @@ function normalizeCompanyUpdatePayload(body) {
     ...body,
     pipelineStage: body.pipelineStage ? normalizeEnum(body.pipelineStage, PIPELINE_STAGES, 'new') : undefined,
     expectedValue: body.expectedValue === undefined ? undefined : parseMoney(body.expectedValue),
-    tags: Array.isArray(body.tags) ? body.tags : undefined
+    tags: Array.isArray(body.tags) ? body.tags : undefined,
+    customFields: body.customFields && typeof body.customFields === 'object' ? body.customFields : undefined
   };
 }
 

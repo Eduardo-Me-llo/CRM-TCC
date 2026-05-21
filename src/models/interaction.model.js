@@ -13,7 +13,7 @@ async function list(tenantId, { companyId = '', contactId = '', status = '', cha
         AND ($3 = '' OR i.contact_id::text = $3)
         AND ($4 = '' OR i.status = $4)
         AND ($5 = '' OR i.channel = $5)
-        AND ($6 = '' OR i.subject ILIKE '%' || $6 || '%' OR i.description ILIKE '%' || $6 || '%' OR i.outcome ILIKE '%' || $6 || '%')
+        AND ($6 = '' OR i.subject ILIKE '%' || $6 || '%' OR i.description ILIKE '%' || $6 || '%' OR i.outcome ILIKE '%' || $6 || '%' OR i.custom_fields::text ILIKE '%' || $6 || '%')
       ORDER BY i.created_at DESC`,
     [tenantId, companyId, contactId, status, channel, q]
   );
@@ -23,10 +23,10 @@ async function list(tenantId, { companyId = '', contactId = '', status = '', cha
 async function create(tenantId, userId, data) {
   const result = await query(
     `INSERT INTO client_interactions
-      (tenant_id, company_id, contact_id, user_id, channel, direction, subject, description, outcome, next_action_at, status)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+      (tenant_id, company_id, contact_id, user_id, channel, direction, subject, description, outcome, next_action_at, status, custom_fields)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
      RETURNING *`,
-    [tenantId, data.companyId, data.contactId || null, userId, data.channel, data.direction, data.subject, data.description, data.outcome || null, data.nextActionAt || null, data.status]
+    [tenantId, data.companyId, data.contactId || null, userId, data.channel, data.direction, data.subject, data.description, data.outcome || null, data.nextActionAt || null, data.status, JSON.stringify(data.customFields || {})]
   );
   return mapInteraction(result.rows[0]);
 }
@@ -41,10 +41,11 @@ async function update(tenantId, interactionId, data) {
             outcome = COALESCE($5, outcome),
             next_action_at = COALESCE($6, next_action_at),
             status = COALESCE($7, status),
+            custom_fields = COALESCE($8, custom_fields),
             updated_at = now()
-      WHERE id = $8 AND tenant_id = $9
+      WHERE id = $9 AND tenant_id = $10
       RETURNING *`,
-    [data.channel || null, data.direction || null, data.subject || null, data.description || null, data.outcome || null, data.nextActionAt || null, data.status || null, interactionId, tenantId]
+    [data.channel || null, data.direction || null, data.subject || null, data.description || null, data.outcome || null, data.nextActionAt || null, data.status || null, data.customFields == null ? null : JSON.stringify(data.customFields), interactionId, tenantId]
   );
   return result.rows[0] ? mapInteraction(result.rows[0]) : null;
 }

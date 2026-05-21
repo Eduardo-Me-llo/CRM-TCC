@@ -63,6 +63,19 @@ const directionLabels = {
   internal: 'Interno'
 };
 
+const customEntityLabels = {
+  client_company: 'Clientes',
+  client_contact: 'Contatos',
+  client_interaction: 'Relacionamentos'
+};
+
+const customFieldTypeLabels = {
+  text: 'Texto',
+  number: 'Numero',
+  date: 'Data',
+  select: 'Lista'
+};
+
 function $(selector, root = document) { return root.querySelector(selector); }
 function $all(selector, root = document) { return Array.from(root.querySelectorAll(selector)); }
 function esc(value) {
@@ -93,6 +106,12 @@ function has(permission) {
 }
 function isDeveloper() {
   return state.user?.role === 'DEVELOPER';
+}
+function isAdminMaster() {
+  return state.user?.role === 'ADMIN_MASTER';
+}
+function isAdminOrMaster() {
+  return state.user?.role === 'ADMIN_MASTER' || state.user?.role === 'ADMIN';
 }
 function setAlert(message, type = 'success') {
   state.alert = { message, type };
@@ -218,6 +237,68 @@ function modal({ title, body, submitText = 'Salvar', onSubmit }) {
   });
 }
 
+async function ensureCustomFields() {
+  if (isDeveloper()) return [];
+  if (!state.cache.customFields) {
+    state.cache.customFields = await api('/api/custom-fields').catch(() => []);
+  }
+  return state.cache.customFields;
+}
+
+function customFieldsFor(entityType) {
+  return (state.cache.customFields || []).filter(f => f.entityType === entityType);
+}
+
+function customFieldValue(record, field) {
+  const values = record?.customFields || {};
+  return values[field.fieldKey] ?? '';
+}
+
+function customFieldsHtml(entityType, record = {}) {
+  const fields = customFieldsFor(entityType);
+  if (!fields.length) return '';
+  return fields.map(field => {
+    const value = customFieldValue(record, field);
+    const required = field.isRequired ? 'required' : '';
+    if (field.fieldType === 'select') {
+      return `<div class="field"><label>${esc(field.label)}${field.isRequired ? ' *' : ''}</label><select class="select" name="custom_${esc(field.fieldKey)}" ${required}><option value="">Selecione</option>${(field.options || []).map(option => `<option value="${esc(option)}" ${value === option ? 'selected' : ''}>${esc(option)}</option>`).join('')}</select></div>`;
+    }
+    const type = field.fieldType === 'number' ? 'number' : field.fieldType === 'date' ? 'date' : 'text';
+    return `<div class="field"><label>${esc(field.label)}${field.isRequired ? ' *' : ''}</label><input class="input" type="${type}" name="custom_${esc(field.fieldKey)}" value="${esc(value)}" ${required} /></div>`;
+  }).join('');
+}
+
+function customFieldsDetailHtml(entityType, record = {}) {
+  const fields = customFieldsFor(entityType);
+  if (!fields.length) return '';
+  return fields.map(field => `<div><span class="detail-label">${esc(field.label)}</span><strong>${esc(customFieldValue(record, field) || '-')}</strong></div>`).join('');
+}
+
+function customTableHeaders(entityType) {
+  return customFieldsFor(entityType).map(field => `<th>${esc(field.label)}</th>`).join('');
+}
+
+function customTableCells(entityType, record = {}) {
+  return customFieldsFor(entityType).map(field => `<td>${esc(customFieldValue(record, field) || '-')}</td>`).join('');
+}
+
+function attachCustomFields(values, entityType) {
+  const customFields = {};
+  customFieldsFor(entityType).forEach(field => {
+    const key = `custom_${field.fieldKey}`;
+    if (Object.prototype.hasOwnProperty.call(values, key)) {
+      customFields[field.fieldKey] = values[key];
+      delete values[key];
+    }
+  });
+  values.customFields = customFields;
+  return values;
+}
+
+function customFieldSearchText(record) {
+  return Object.values(record?.customFields || {}).join(' ');
+}
+
 function defaultRoute() {
   if (!state.user) return 'login';
   if (isDeveloper()) return 'developer-dashboard';
@@ -329,8 +410,11 @@ function shell(content) {
       </aside>
       <main class="main">
         <header class="topbar">
-          <div class="status-pill">● Sistema online</div>
-          <div class="search-box">⌕ Buscar empresas, contatos, relacionamentos...</div>
+          <form class="search-box" id="globalSearchForm">
+            <span>⌕</span>
+            <input id="globalSearchInput" placeholder="Buscar empresas, contatos, relacionamentos..." autocomplete="off" />
+            <div class="search-results" id="globalSearchResults"></div>
+          </form>
           <div class="user-menu-wrap">
             <button class="user-chip" id="userMenuToggle" type="button">
               <div><strong>${esc(state.user.name)}</strong><div class="small user-role">${esc(roleLabels[state.user.role] || state.user.role)}</div></div>
@@ -343,7 +427,7 @@ function shell(content) {
                 <span>${esc(state.user.tenantName || 'Painel CRM')}</span>
               </div>
               ${!isDeveloper() ? '<button type="button" data-route="settings">Preferencias</button>' : '<button type="button" data-route="developer-settings">Configuracoes</button>'}
-              ${has('users.read') ? '<button type="button" data-route="users">Usuarios e acessos</button>' : ''}
+              ${isAdminMaster() ? '<button type="button" data-route="users">Usuarios e acessos</button>' : ''}
               <button type="button" id="logoutMenuBtn">Sair</button>
             </div>
           </div>
@@ -354,6 +438,7 @@ function shell(content) {
   $('#logoutBtn').addEventListener('click', () => logout(true));
   $('#logoutMenuBtn')?.addEventListener('click', () => logout(true));
   $('#sidebarToggle')?.addEventListener('click', () => setSidebarCollapsed(!state.sidebarCollapsed));
+  bindGlobalSearch();
   $('#userMenuToggle')?.addEventListener('click', event => {
     event.stopPropagation();
     const menu = $('#userMenu');
@@ -371,6 +456,51 @@ function closeUserMenuOnce(event) {
   if (menu && wrap && !wrap.contains(event.target)) menu.classList.remove('open');
 }
 
+function bindGlobalSearch() {
+  const form = $('#globalSearchForm');
+  const input = $('#globalSearchInput');
+  const results = $('#globalSearchResults');
+  if (!form || !input || !results || isDeveloper()) return;
+
+  const run = async () => {
+    const q = input.value.trim();
+    if (q.length < 2) {
+      results.classList.remove('open');
+      results.innerHTML = '';
+      return;
+    }
+    const params = encodeURIComponent(q);
+    const [companies, contacts, interactions] = await Promise.all([
+      has('client_companies.read') ? api(`/api/client-companies?q=${params}`).catch(() => []) : Promise.resolve([]),
+      has('client_contacts.read') ? api(`/api/client-contacts?q=${params}`).catch(() => []) : Promise.resolve([]),
+      has('client_interactions.read') ? api(`/api/client-interactions?q=${params}`).catch(() => []) : Promise.resolve([])
+    ]);
+    const items = [
+      ...companies.slice(0, 4).map(item => ({ type: 'Empresa', route: 'companies', title: item.name, meta: item.cnpj || item.industry || item.status })),
+      ...contacts.slice(0, 4).map(item => ({ type: 'Contato', route: 'contacts', title: item.name, meta: item.companyName || item.email || item.phone })),
+      ...interactions.slice(0, 4).map(item => ({ type: 'Relacionamento', route: 'interactions', title: item.subject, meta: item.companyName || fmtDate(item.createdAt) }))
+    ];
+    results.innerHTML = items.length
+      ? items.map(item => `<button type="button" data-search-route="${item.route}"><span class="badge prospect">${esc(item.type)}</span><strong>${esc(item.title)}</strong><small>${esc(item.meta || '-')}</small></button>`).join('')
+      : '<div class="empty mini">Nenhum resultado encontrado.</div>';
+    results.classList.add('open');
+    $all('[data-search-route]', results).forEach(btn => btn.addEventListener('click', () => {
+      results.classList.remove('open');
+      navigate(btn.dataset.searchRoute);
+    }));
+  };
+
+  let timer;
+  input.addEventListener('input', () => {
+    clearTimeout(timer);
+    timer = setTimeout(run, 250);
+  });
+  form.addEventListener('submit', event => {
+    event.preventDefault();
+    run();
+  });
+}
+
 function navButton(route, icon, label) {
   return `<button class="nav-btn ${state.route === route ? 'active' : ''}" data-route="${route}"><span class="nav-icon">${icon}</span>${label}</button>`;
 }
@@ -383,8 +513,8 @@ function tenantNav() {
   if (has('client_interactions.read')) items.push(navButton('interactions', '☎', 'Relacionamentos'));
   if (has('tasks.read')) items.push(navButton('tasks', '✓', 'Tarefas'));
   const admin = [];
-  if (has('users.read')) admin.push(navButton('users', '🛡', 'Usuários e Acessos'));
-  if (has('audit_logs.read')) admin.push(navButton('audit', '🧾', 'Auditoria'));
+  if (isAdminMaster()) admin.push(navButton('users', '🛡', 'Usuários e Acessos'));
+  if (isAdminOrMaster()) admin.push(navButton('audit', '🧾', 'Auditoria'));
   admin.push(navButton('settings', '⚙', 'Configurações'));
   return `
     <div class="nav-section">Operacional</div>${items.join('')}
@@ -424,9 +554,9 @@ async function renderTenant() {
     if (route === 'contacts') return shell(await viewContacts());
     if (route === 'interactions') return shell(await viewInteractions());
     if (route === 'tasks' && has('tasks.read')) return shell(await viewTasks());
-    if (route === 'users' && has('users.read')) return shell(await viewUsers());
-    if (route === 'audit' && has('audit_logs.read')) return shell(await viewAudit());
-    if (route === 'settings') return shell(viewSettings());
+    if (route === 'users' && isAdminMaster()) return shell(await viewUsers());
+    if (route === 'audit' && isAdminOrMaster()) return shell(await viewAudit());
+    if (route === 'settings') return shell(await viewSettings());
     return shell(viewForbidden());
   } catch (error) {
     setAlert(error.message, 'error');
@@ -468,7 +598,7 @@ async function viewDashboard() {
     </div>
     <div style="height:18px"></div>
     <div class="grid grid-2">
-      <div class="card pad"><h2>Funil comercial</h2><div style="height:12px"></div>${pipeline.map(s => `<div class="metric-row">${pipelineBadge(s.stage)}<span><strong>${s.total}</strong> • ${fmtMoney(s.value)}</span></div>`).join('') || '<div class="empty">Sem dados.</div>'}</div>
+      <div class="card pad"><h2>Funil comercial</h2><div style="height:12px"></div>${pipeline.map(s => `<div class="metric-row">${pipelineBadge(s.stage)}<span><strong>${s.total}</strong></span></div>`).join('') || '<div class="empty">Sem dados.</div>'}</div>
       <div class="card pad"><h2>Tarefas próximas</h2><div style="height:12px"></div>${(data.recentTasks || []).map(t => `<div class="metric-row"><span><strong>${esc(t.title)}</strong><div class="muted small">${esc(t.companyName || 'Sem empresa')} • ${fmtDate(t.dueAt)}</div></span>${taskStatusBadge(t.status)}</div>`).join('') || '<div class="empty">Sem tarefas em aberto.</div>'}<div style="height:12px"></div><button class="btn primary" id="goTasks">Abrir tarefas</button></div>
       <div class="card pad"><h2>Status das empresas</h2><div style="height:12px"></div>${data.companiesByStatus.map(s => `<div class="metric-row">${statusBadge(s.status)}<strong>${s.total}</strong></div>`).join('') || '<div class="empty">Sem dados.</div>'}</div>
       <div class="card pad"><h2>Interações por canal</h2><div style="height:12px"></div>${channels.map(s => `<div class="metric-row"><span class="badge prospect">${esc(channelLabels[s.channel] || s.channel)}</span><strong>${s.total}</strong></div>`).join('') || '<div class="empty">Sem dados.</div>'}<div style="height:12px"></div><button class="btn" id="goCompanies">Abrir Empresas Clientes</button></div>
@@ -480,6 +610,7 @@ function bindDashboardEvents() {
 }
 
 async function viewCompanies() {
+  await ensureCustomFields();
   const companies = await api('/api/client-companies');
   const users = has('users.read') ? await api('/api/users').catch(() => []) : [];
   state.cache.companies = companies;
@@ -505,6 +636,7 @@ async function viewCompanies() {
 }
 
 async function viewProspects() {
+  await ensureCustomFields();
   const [companies, users, contacts] = await Promise.all([
     api('/api/client-companies'),
     has('users.read') ? api('/api/users').catch(() => []) : Promise.resolve([]),
@@ -560,12 +692,12 @@ function prospectsBoard(prospects) {
       const items = prospects.filter(c => (c.pipelineStage || 'new') === stage);
       const total = items.reduce((sum, c) => sum + Number(c.expectedValue || 0), 0);
       return `<section class="pipeline-column">
-        <header><strong>${esc(pipelineStageLabels[stage])}</strong><span>${items.length} • ${fmtMoney(total)}</span></header>
+        <header><strong>${esc(pipelineStageLabels[stage])}</strong><span>${items.length}</span></header>
         <div class="pipeline-list">
           ${items.map(c => `<article class="pipeline-card clickable" data-company-detail="${c.id}">
             <div class="pipeline-card-head"><strong>${esc(c.name)}</strong>${statusBadge(c.status)}</div>
             <div class="muted small">${esc(c.industry || c.source || 'Sem contexto')}</div>
-            <div class="pipeline-meta"><span>${fmtMoney(c.expectedValue)}</span><span>${fmtDateOnly(c.expectedCloseDate || c.nextActionAt)}</span></div>
+            <div class="pipeline-meta"><span>${fmtDateOnly(c.expectedCloseDate || c.nextActionAt)}</span></div>
             <div class="muted small">Responsável: ${esc(c.ownerName || '-')}</div>
             <div class="split-actions">
               ${has('client_companies.update') ? `<button class="btn" data-move-prospect="${c.id}" data-stage="${previousPipelineStage(stage)}" ${previousPipelineStage(stage) ? '' : 'disabled'}>←</button><button class="btn" data-move-prospect="${c.id}" data-stage="${nextPipelineStage(stage)}" ${nextPipelineStage(stage) ? '' : 'disabled'}>→</button>` : ''}
@@ -624,7 +756,7 @@ function bindProspectRowActions() {
 function filterProspects() {
   const q = $('#prospectSearch').value.toLowerCase();
   const list = state.cache.prospects.filter(c => {
-    const text = [c.name, c.tradeName, c.cnpj, c.industry, c.source, c.notes, (c.tags || []).join(' ')].join(' ').toLowerCase();
+    const text = [c.name, c.tradeName, c.cnpj, c.industry, c.source, c.notes, customFieldSearchText(c), (c.tags || []).join(' ')].join(' ').toLowerCase();
     return !q || text.includes(q);
   });
   $('#prospectArea').innerHTML = prospectsBoard(list);
@@ -633,13 +765,14 @@ function filterProspects() {
 
 function companiesTable(companies) {
   if (!companies.length) return '<div class="card empty">Nenhuma empresa cliente cadastrada.</div>';
-  return `<div class="table-wrap"><table><thead><tr><th>Empresa</th><th>Ramo</th><th>Status</th><th>Funil</th><th>Valor</th><th>Contatos</th><th>Última interação</th><th>Próxima ação</th><th>Responsável</th><th>Tags</th></tr></thead><tbody>
+  return `<div class="table-wrap"><table><thead><tr><th>Empresa</th><th>Ramo</th><th>Status</th><th>Funil</th><th>Valor</th>${customTableHeaders('client_company')}<th>Contatos</th><th>Última interação</th><th>Próxima ação</th><th>Responsável</th><th>Tags</th></tr></thead><tbody>
     ${companies.map(c => `<tr class="clickable" data-company-detail="${c.id}">
       <td><strong>${esc(c.name)}</strong><div class="muted small">${esc(c.tradeName || c.cnpj || c.source || '')}</div></td>
       <td>${esc(c.industry || '-')}</td>
       <td>${statusBadge(c.status)}</td>
       <td>${pipelineBadge(c.pipelineStage)}</td>
       <td>${fmtMoney(c.expectedValue)}</td>
+      ${customTableCells('client_company', c)}
       <td><strong>${c.contactsCount}</strong></td>
       <td>${fmtDateOnly(c.lastInteractionAt)}</td>
       <td>${fmtDateOnly(c.nextActionAt)}</td>
@@ -671,7 +804,7 @@ function filterCompanies() {
   const status = $('#companyStatus').value;
   const pipelineStage = $('#companyPipeline')?.value || '';
   const list = state.cache.companies.filter(c => {
-    const text = [c.name, c.tradeName, c.cnpj, c.industry, c.notes, (c.tags || []).join(' ')].join(' ').toLowerCase();
+    const text = [c.name, c.tradeName, c.cnpj, c.industry, c.notes, customFieldSearchText(c), (c.tags || []).join(' ')].join(' ').toLowerCase();
     return (!q || text.includes(q)) && (!status || c.status === status) && (!pipelineStage || c.pipelineStage === pipelineStage);
   });
   $('#companyArea').innerHTML = companiesTable(list);
@@ -700,9 +833,11 @@ function openCompanyModal(company = null) {
         <div class="field"><label>Responsável interno</label><select class="select" name="ownerUserId"><option value="">Usuário atual</option>${usersOptions}</select></div>
         <div class="field"><label>Tags separadas por vírgula</label><input class="input" name="tags" value="${esc((company?.tags || []).join(', '))}" /></div>
         <div class="field full"><label>Motivo de perda</label><input class="input" name="lostReason" value="${esc(company?.lostReason || '')}" placeholder="Preencha se a oportunidade foi perdida" /></div>
+        ${customFieldsHtml('client_company', company)}
         <div class="field full"><label>Observações</label><textarea name="notes">${esc(company?.notes || '')}</textarea></div>
       </div>`,
     onSubmit: async values => {
+      attachCustomFields(values, 'client_company');
       values.tags = tagsFromText(values.tags);
       if (!values.ownerUserId) delete values.ownerUserId;
       await api(isEdit ? `/api/client-companies/${company.id}` : '/api/client-companies', { method: isEdit ? 'PUT' : 'POST', body: JSON.stringify(values) });
@@ -748,6 +883,7 @@ async function openCompanyDetail(companyId) {
           <p><strong>CNPJ:</strong> ${esc(company.cnpj || '-')}</p>
           <p><strong>Local:</strong> ${esc([company.city, company.state].filter(Boolean).join(' / ') || '-')}</p>
           <p><strong>Responsável:</strong> ${esc(company.ownerName || '-')}</p>
+          <div class="detail-grid">${customFieldsDetailHtml('client_company', company)}</div>
           <p><strong>Observações:</strong><br /><span class="muted">${esc(company.notes || '-')}</span></p>
           <div class="tag-list">${(company.tags || []).map(t => `<span class="tag">${esc(t)}</span>`).join('')}</div>
           <div style="height:16px"></div>
@@ -772,6 +908,7 @@ async function openCompanyDetail(companyId) {
 }
 
 async function viewContacts() {
+  await ensureCustomFields();
   const [contacts, companies] = await Promise.all([api('/api/client-contacts'), api('/api/client-companies')]);
   state.cache.contacts = contacts;
   state.cache.companies = companies;
@@ -784,13 +921,14 @@ async function viewContacts() {
 }
 function contactsTable(contacts) {
   if (!contacts.length) return '<div class="card empty">Nenhum contato cadastrado.</div>';
-  return `<div class="table-wrap"><table><thead><tr><th>Contato</th><th>Empresa</th><th>Cargo</th><th>Comunicação</th><th>Preferência</th><th>Última interação</th><th>Status</th><th>Ações</th></tr></thead><tbody>
+  return `<div class="table-wrap"><table><thead><tr><th>Contato</th><th>Empresa</th><th>Cargo</th><th>Comunicação</th><th>Preferência</th>${customTableHeaders('client_contact')}<th>Última interação</th><th>Status</th><th>Ações</th></tr></thead><tbody>
     ${contacts.map(c => `<tr class="clickable" data-contact-detail="${c.id}">
       <td><strong>${esc(c.name)}</strong><div class="muted small">${esc(c.email || '-')}</div></td>
       <td>${esc(c.companyName || '-')}</td>
       <td>${esc(c.position || '-')}</td>
       <td><div class="small">Tel: ${esc(c.phone || '-')}</div><div class="small">WhatsApp: ${esc(c.whatsapp || '-')}</div></td>
       <td>${esc(channelLabels[c.preferredChannel] || c.preferredChannel)}</td>
+      ${customTableCells('client_contact', c)}
       <td>${fmtDateOnly(c.lastInteractionAt)}</td>
       <td>${statusBadge(c.status)}</td>
       <td><div class="split-actions">${has('client_contacts.update') ? `<button class="btn" data-edit-contact="${c.id}">Editar</button>` : ''}${has('client_interactions.create') ? `<button class="btn primary" data-new-interaction-contact="${c.id}">Relacionar</button>` : ''}</div></td>
@@ -817,7 +955,7 @@ function filterContacts() {
   const q = $('#contactSearch').value.toLowerCase();
   const companyId = $('#contactCompany').value;
   const list = state.cache.contacts.filter(c => {
-    const text = [c.name, c.email, c.phone, c.whatsapp, c.position, c.companyName].join(' ').toLowerCase();
+    const text = [c.name, c.email, c.phone, c.whatsapp, c.position, c.companyName, customFieldSearchText(c)].join(' ').toLowerCase();
     return (!q || text.includes(q)) && (!companyId || c.companyId === companyId);
   });
   $('#contactArea').innerHTML = contactsTable(list);
@@ -839,9 +977,11 @@ function openContactModal(contact = null) {
         <div class="field"><label>WhatsApp</label><input class="input" name="whatsapp" value="${esc(contact?.whatsapp || '')}" /></div>
         <div class="field"><label>Canal preferencial</label><select class="select" name="preferredChannel"><option value="email" ${contact?.preferredChannel === 'email' ? 'selected' : ''}>E-mail</option><option value="phone" ${contact?.preferredChannel === 'phone' ? 'selected' : ''}>Telefone</option><option value="whatsapp" ${contact?.preferredChannel === 'whatsapp' ? 'selected' : ''}>WhatsApp</option><option value="meeting" ${contact?.preferredChannel === 'meeting' ? 'selected' : ''}>Reunião</option></select></div>
         <div class="field"><label>Status</label><select class="select" name="status"><option value="active" ${contact?.status === 'active' ? 'selected' : ''}>Ativo</option><option value="inactive" ${contact?.status === 'inactive' ? 'selected' : ''}>Inativo</option></select></div>
+        ${customFieldsHtml('client_contact', contact)}
         <div class="field full"><label>Observações</label><textarea name="notes">${esc(contact?.notes || '')}</textarea></div>
       </div>`,
     onSubmit: async values => {
+      attachCustomFields(values, 'client_contact');
       if (contact?.id) {
         delete values.companyId;
         await api(`/api/client-contacts/${contact.id}`, { method: 'PUT', body: JSON.stringify(values) });
@@ -876,6 +1016,7 @@ async function openContactDetail(contactId) {
           <div><span class="detail-label">Telefone</span><strong>${esc(contact.phone || '-')}</strong></div>
           <div><span class="detail-label">WhatsApp</span><strong>${esc(contact.whatsapp || '-')}</strong></div>
           <div><span class="detail-label">Canal preferido</span><strong>${esc(channelLabels[contact.preferredChannel] || contact.preferredChannel || '-')}</strong></div>
+          ${customFieldsDetailHtml('client_contact', contact)}
         </div>
         <div class="detail-panel">
           <h3>Observações</h3>
@@ -899,6 +1040,7 @@ async function openContactDetail(contactId) {
 }
 
 async function viewInteractions() {
+  await ensureCustomFields();
   const [interactions, companies, contacts] = await Promise.all([api('/api/client-interactions'), api('/api/client-companies'), api('/api/client-contacts')]);
   state.cache.interactions = interactions;
   state.cache.companies = companies;
@@ -918,7 +1060,7 @@ async function viewInteractions() {
 }
 function interactionsTable(interactions) {
   if (!interactions.length) return '<div class="card empty">Nenhum relacionamento registrado.</div>';
-  return `<div class="table-wrap"><table><thead><tr><th>Data</th><th>Empresa</th><th>Contato</th><th>Canal</th><th>Assunto</th><th>Responsável</th><th>Resultado</th><th>Próxima ação</th><th>Status</th></tr></thead><tbody>
+  return `<div class="table-wrap"><table><thead><tr><th>Data</th><th>Empresa</th><th>Contato</th><th>Canal</th><th>Assunto</th><th>Responsável</th><th>Resultado</th>${customTableHeaders('client_interaction')}<th>Próxima ação</th><th>Status</th></tr></thead><tbody>
     ${interactions.map(i => `<tr class="clickable" data-interaction-detail="${i.id}">
       <td>${fmtDate(i.createdAt)}</td>
       <td>${esc(i.companyName || '-')}</td>
@@ -927,6 +1069,7 @@ function interactionsTable(interactions) {
       <td><strong>${esc(i.subject)}</strong><div class="muted small">${esc(i.description).slice(0, 120)}${String(i.description || '').length > 120 ? '...' : ''}</div></td>
       <td>${esc(i.userName || '-')}</td>
       <td>${esc(i.outcome || '-')}</td>
+      ${customTableCells('client_interaction', i)}
       <td>${fmtDateOnly(i.nextActionAt)}</td>
       <td>${statusBadge(i.status)}</td>
     </tr>`).join('')}
@@ -948,7 +1091,7 @@ function filterInteractions() {
   const companyId = $('#interactionCompany').value;
   const channel = $('#interactionChannel').value;
   const list = state.cache.interactions.filter(i => {
-    const text = [i.subject, i.description, i.outcome, i.companyName, i.contactName].join(' ').toLowerCase();
+    const text = [i.subject, i.description, i.outcome, i.companyName, i.contactName, customFieldSearchText(i)].join(' ').toLowerCase();
     return (!q || text.includes(q)) && (!companyId || i.companyId === companyId) && (!channel || i.channel === channel);
   });
   $('#interactionArea').innerHTML = interactionsTable(list);
@@ -971,8 +1114,10 @@ function openInteractionModal(prefill = {}) {
         <div class="field"><label>Resultado</label><input class="input" name="outcome" placeholder="Aguardando retorno" /></div>
         <div class="field"><label>Próxima ação</label><input class="input" type="datetime-local" name="nextActionAt" /></div>
         <div class="field"><label>Status</label><select class="select" name="status"><option value="open">Aberto</option><option value="done">Concluído</option><option value="lost">Perdido</option></select></div>
+        ${customFieldsHtml('client_interaction', prefill)}
       </div>`,
     onSubmit: async values => {
+      attachCustomFields(values, 'client_interaction');
       if (!values.contactId) delete values.contactId;
       if (!values.nextActionAt) delete values.nextActionAt;
       await api('/api/client-interactions', { method: 'POST', body: JSON.stringify(values) });
@@ -1003,6 +1148,7 @@ function openInteractionDetail(interactionId) {
           <div><span class="detail-label">Responsável</span><strong>${esc(interaction.userName || '-')}</strong></div>
           <div><span class="detail-label">Próxima ação</span><strong>${fmtDate(interaction.nextActionAt)}</strong></div>
           <div><span class="detail-label">Resultado</span><strong>${esc(interaction.outcome || '-')}</strong></div>
+          ${customFieldsDetailHtml('client_interaction', interaction)}
         </div>
         <div class="detail-panel">
           <h3>Diálogo registrado</h3>
@@ -1212,7 +1358,8 @@ async function viewAudit() {
     </tbody></table></div>`;
 }
 
-function viewSettings() {
+async function viewSettings() {
+  await ensureCustomFields();
   setTimeout(bindSettingsEvents);
   const p = state.user.preferences || {};
   return `${pageHeader('Configurações', 'Preferências da conta e comportamento visual.', '⚙', '<button class="btn" id="restorePrefs">Restaurar padrão</button><button class="btn primary" id="savePrefs">Salvar alterações</button>')}
@@ -1229,12 +1376,80 @@ function viewSettings() {
         ${toggleRow('animations', 'Animações', 'Transições e efeitos visuais', p.animations !== false)}
         ${toggleRow('collapseSidebar', 'Sidebar colapsada por padrão', 'Abrir sistema com menu reduzido', Boolean(p.collapseSidebar))}
       </div></div>
-    </div>`;
+    </div>
+    ${isAdminMaster() ? customFieldsSettingsHtml() : ''}`;
 }
 function toggleRow(id, title, subtitle, checked) {
   return `<div style="display:flex;align-items:center;justify-content:space-between;padding:14px 0;border-bottom:1px solid var(--border)"><div><strong>${esc(title)}</strong><div class="muted small">${esc(subtitle)}</div></div><label style="display:inline-flex;align-items:center;gap:8px"><input type="checkbox" id="${id}" ${checked ? 'checked' : ''} /> <span class="badge ${checked ? 'active' : ''}">${checked ? 'Ativo' : 'Off'}</span></label></div>`;
 }
+
+function customFieldsSettingsHtml() {
+  const fields = state.cache.customFields || [];
+  return `<div style="height:18px"></div>
+    <div class="card pad">
+      <div class="page-head">
+        <div><h2>Campos customizados</h2><div class="muted small">Disponiveis nas tabelas de clientes, contatos e relacionamentos.</div></div>
+        <button class="btn primary" id="newCustomField" type="button">+ Novo campo</button>
+      </div>
+      ${fields.length ? `<div class="table-wrap"><table><thead><tr><th>Tabela</th><th>Campo</th><th>Tipo</th><th>Obrigatorio</th><th>Acoes</th></tr></thead><tbody>
+        ${fields.map(field => `<tr>
+          <td>${esc(customEntityLabels[field.entityType] || field.entityType)}</td>
+          <td><strong>${esc(field.label)}</strong><div class="muted small">${esc(field.fieldKey)}</div></td>
+          <td>${esc(customFieldTypeLabels[field.fieldType] || field.fieldType)}</td>
+          <td>${field.isRequired ? 'Sim' : 'Nao'}</td>
+          <td><div class="split-actions"><button class="btn" data-edit-custom-field="${field.id}">Editar</button><button class="btn danger" data-delete-custom-field="${field.id}">Remover</button></div></td>
+        </tr>`).join('')}
+      </tbody></table></div>` : '<div class="empty">Nenhum campo customizado cadastrado.</div>'}
+    </div>`;
+}
+
+function openCustomFieldModal(field = null) {
+  const isEdit = Boolean(field?.id);
+  modal({
+    title: isEdit ? 'Editar campo customizado' : 'Novo campo customizado',
+    submitText: isEdit ? 'Salvar alteracoes' : 'Criar campo',
+    body: `
+      <div class="form-grid">
+        <div class="field"><label>Tabela *</label><select class="select" name="entityType" ${isEdit ? 'disabled' : ''} required>
+          ${Object.entries(customEntityLabels).map(([key, label]) => `<option value="${key}" ${field?.entityType === key ? 'selected' : ''}>${esc(label)}</option>`).join('')}
+        </select></div>
+        <div class="field"><label>Nome do campo *</label><input class="input" name="label" value="${esc(field?.label || '')}" required /></div>
+        <div class="field"><label>Tipo</label><select class="select" name="fieldType">
+          ${Object.entries(customFieldTypeLabels).map(([key, label]) => `<option value="${key}" ${field?.fieldType === key ? 'selected' : ''}>${esc(label)}</option>`).join('')}
+        </select></div>
+        <div class="field"><label>Ordem</label><input class="input" type="number" name="sortOrder" value="${esc(field?.sortOrder || 0)}" /></div>
+        <div class="field full"><label>Opcoes para lista</label><input class="input" name="options" value="${esc((field?.options || []).join(', '))}" placeholder="Opcao A, Opcao B" /></div>
+        <div class="field"><label><input type="checkbox" data-checkbox name="isRequired" ${field?.isRequired ? 'checked' : ''} /> Obrigatorio</label></div>
+      </div>`,
+    onSubmit: async values => {
+      values.options = tagsFromText(values.options);
+      values.sortOrder = Number(values.sortOrder || 0);
+      if (isEdit) delete values.entityType;
+      await api(isEdit ? `/api/custom-fields/${field.id}` : '/api/custom-fields', { method: isEdit ? 'PUT' : 'POST', body: JSON.stringify(values) });
+      state.cache.customFields = null;
+      setAlert(isEdit ? 'Campo atualizado.' : 'Campo customizado criado.');
+    }
+  });
+}
+
 function bindSettingsEvents() {
+  $('#newCustomField')?.addEventListener('click', () => openCustomFieldModal());
+  $all('[data-edit-custom-field]').forEach(btn => btn.addEventListener('click', () => {
+    const field = (state.cache.customFields || []).find(item => item.id === btn.dataset.editCustomField);
+    openCustomFieldModal(field);
+  }));
+  $all('[data-delete-custom-field]').forEach(btn => btn.addEventListener('click', async () => {
+    if (!confirm('Remover este campo customizado? Os valores ja preenchidos permanecem no historico dos registros.')) return;
+    try {
+      await api(`/api/custom-fields/${btn.dataset.deleteCustomField}`, { method: 'DELETE' });
+      state.cache.customFields = null;
+      setAlert('Campo customizado removido.');
+      await render();
+    } catch (error) {
+      setAlert(error.message, 'error');
+      await render();
+    }
+  }));
   $('#restorePrefs')?.addEventListener('click', async () => {
     const preferences = { notifyAssigned: true, notifyComments: true, notifySla: true, weeklyReport: false, theme: 'light', density: 'comfortable', animations: true, collapseSidebar: false };
     const result = await api('/api/me/preferences', { method: 'PUT', body: JSON.stringify({ preferences }) });

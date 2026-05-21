@@ -56,7 +56,13 @@ a { color: inherit; text-decoration: none; }
 
 .main { min-width: 0; }
 .topbar { height: 72px; background: rgba(255,255,255,.82); backdrop-filter: blur(14px); border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; padding: 0 28px; position: sticky; top: 0; z-index: 5; }
-.search-box { background: var(--surface-soft); border: 1px solid var(--border); border-radius: 16px; padding: 10px 14px; min-width: 360px; display: flex; gap: 8px; color: var(--muted); }
+.search-box { background: var(--surface-soft); border: 1px solid var(--border); border-radius: 16px; padding: 10px 14px; min-width: 360px; display: flex; gap: 8px; color: var(--muted); position: relative; }
+.search-box input { border: 0; background: transparent; outline: none; width: 100%; color: var(--text); min-width: 0; }
+.search-results { position: absolute; top: calc(100% + 8px); left: 0; right: 0; background: #fff; border: 1px solid var(--border); border-radius: 10px; box-shadow: var(--shadow); padding: 8px; display: none; z-index: 30; }
+.search-results.open { display: grid; gap: 4px; }
+.search-results button { border: 0; background: transparent; border-radius: 8px; padding: 10px; display: grid; grid-template-columns: auto 1fr; gap: 4px 8px; text-align: left; align-items: center; }
+.search-results button:hover { background: var(--surface-soft); }
+.search-results small { grid-column: 2; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .status-pill { border: 1px solid #b7ecd0; color: #15803d; background: #ecfdf5; border-radius: 999px; padding: 8px 12px; font-size: 13px; font-weight: 700; display: inline-flex; gap: 8px; align-items: center; }
 .user-menu-wrap { position: relative; }
 .user-chip { display: flex; align-items: center; gap: 12px; border: 1px solid var(--border); border-radius: 999px; padding: 7px 8px 7px 14px; background: var(--surface); }
@@ -171,7 +177,14 @@ tr:hover td { background: #f8fafc; }
 
 @media (max-width: 1100px) {
   .app-shell { grid-template-columns: 1fr; }
-  .sidebar { position: static; height: auto; }
+  .app-shell.sidebar-collapsed { grid-template-columns: 1fr; }
+  .sidebar { position: static; height: auto; max-height: none; }
+  .side-head { grid-template-columns: 48px 1fr 34px; }
+  .sidebar-collapsed .side-head { grid-template-columns: 48px 1fr 34px; }
+  .sidebar-collapsed .side-head > div:not(.logo), .sidebar-collapsed .nav-section, .sidebar-collapsed .sidebar-footer { display: block; }
+  .sidebar-collapsed .sidebar-toggle { position: static; }
+  .sidebar-collapsed .nav-btn { justify-content: flex-start; padding: 12px 14px; font-size: inherit; }
+  .sidebar-collapsed .nav-btn .nav-icon { width: 22px; font-size: inherit; }
   .grid-4, .grid-3, .grid-2, .company-detail, .detail-grid { grid-template-columns: 1fr; }
   .pipeline-board { grid-template-columns: repeat(6, minmax(260px, 82vw)); }
   .topbar { flex-wrap: wrap; height: auto; padding: 16px; }
@@ -180,4 +193,25 @@ tr:hover td { background: #f8fafc; }
   .login-page { grid-template-columns: 1fr; }
   .login-hero { padding: 38px 24px; }
   .hero-grid { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 720px) {
+  .topbar { align-items: stretch; gap: 12px; }
+  .user-menu-wrap, .user-chip { width: 100%; }
+  .user-chip { justify-content: space-between; border-radius: 14px; }
+  .page-head { flex-direction: column; align-items: stretch; }
+  .page-title { align-items: flex-start; }
+  h1 { font-size: 26px; }
+  h2 { font-size: 19px; }
+  .content { padding: 18px 12px 32px; }
+  .form-grid { grid-template-columns: 1fr; }
+  .modal-backdrop { padding: 10px; align-items: start; }
+  .modal { border-radius: 14px; max-height: calc(100vh - 20px); }
+  .toolbar, .filters, .split-actions { width: 100%; }
+  .filters > .input, .filters > .select, .toolbar .field { width: 100% !important; min-width: 0 !important; }
+  .btn { width: 100%; }
+  .table-wrap { border-radius: 10px; }
+  th, td { padding: 11px 12px; }
+  .login-hero h1 { font-size: 34px; letter-spacing: 0; }
+  .login-card { border-radius: 16px; padding: 22px; }
 }

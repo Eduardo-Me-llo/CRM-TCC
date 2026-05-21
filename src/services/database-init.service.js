@@ -59,6 +59,7 @@ async function initDatabase() {
       address TEXT,
       notes TEXT,
       tags JSONB NOT NULL DEFAULT '[]'::jsonb,
+      custom_fields JSONB NOT NULL DEFAULT '{}'::jsonb,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
@@ -75,6 +76,7 @@ async function initDatabase() {
       preferred_channel TEXT NOT NULL DEFAULT 'email',
       status TEXT NOT NULL DEFAULT 'active',
       notes TEXT,
+      custom_fields JSONB NOT NULL DEFAULT '{}'::jsonb,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
@@ -92,8 +94,25 @@ async function initDatabase() {
       outcome TEXT,
       next_action_at TIMESTAMPTZ,
       status TEXT NOT NULL DEFAULT 'open',
+      custom_fields JSONB NOT NULL DEFAULT '{}'::jsonb,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+
+    CREATE TABLE IF NOT EXISTS custom_fields (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      entity_type TEXT NOT NULL,
+      field_key TEXT NOT NULL,
+      label TEXT NOT NULL,
+      field_type TEXT NOT NULL DEFAULT 'text',
+      options JSONB NOT NULL DEFAULT '[]'::jsonb,
+      is_required BOOLEAN NOT NULL DEFAULT false,
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      created_by_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      UNIQUE (tenant_id, entity_type, field_key)
     );
 
     CREATE TABLE IF NOT EXISTS crm_tasks (
@@ -132,6 +151,7 @@ async function initDatabase() {
     CREATE INDEX IF NOT EXISTS idx_tasks_tenant_status ON crm_tasks(tenant_id, status);
     CREATE INDEX IF NOT EXISTS idx_tasks_tenant_due ON crm_tasks(tenant_id, due_at);
     CREATE INDEX IF NOT EXISTS idx_audit_tenant ON audit_logs(tenant_id);
+    CREATE INDEX IF NOT EXISTS idx_custom_fields_tenant_entity ON custom_fields(tenant_id, entity_type, sort_order);
   `);
 
   await query(`
@@ -139,6 +159,9 @@ async function initDatabase() {
     ALTER TABLE client_companies ADD COLUMN IF NOT EXISTS expected_value NUMERIC(12,2);
     ALTER TABLE client_companies ADD COLUMN IF NOT EXISTS expected_close_date DATE;
     ALTER TABLE client_companies ADD COLUMN IF NOT EXISTS lost_reason TEXT;
+    ALTER TABLE client_companies ADD COLUMN IF NOT EXISTS custom_fields JSONB NOT NULL DEFAULT '{}'::jsonb;
+    ALTER TABLE client_contacts ADD COLUMN IF NOT EXISTS custom_fields JSONB NOT NULL DEFAULT '{}'::jsonb;
+    ALTER TABLE client_interactions ADD COLUMN IF NOT EXISTS custom_fields JSONB NOT NULL DEFAULT '{}'::jsonb;
   `);
 
   const usersCount = await query(`SELECT COUNT(*)::int AS total FROM users`);

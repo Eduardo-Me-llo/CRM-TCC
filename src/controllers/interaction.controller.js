@@ -8,13 +8,13 @@ async function list(req, res) {
 }
 
 async function create(req, res) {
-  const { companyId, contactId, channel = 'email', direction = 'outbound', subject, description, outcome, nextActionAt, status = 'open' } = req.body;
+  const { companyId, contactId, channel = 'email', direction = 'outbound', subject, description, outcome, nextActionAt, status = 'open', customFields = {} } = req.body;
   if (!companyId || !subject || !description) return res.status(400).json({ message: 'Empresa, assunto e descrição são obrigatórios.' });
   if (!(await companyModel.exists(req.user.tenantId, companyId))) return res.status(404).json({ message: 'Empresa cliente não encontrada.' });
   if (contactId && !(await contactModel.existsForCompany(req.user.tenantId, contactId, companyId))) {
     return res.status(404).json({ message: 'Contato não encontrado para esta empresa.' });
   }
-  const result = await interactionModel.create(req.user.tenantId, req.user.id, { companyId, contactId, channel, direction, subject, description, outcome, nextActionAt, status });
+  const result = await interactionModel.create(req.user.tenantId, req.user.id, { companyId, contactId, channel, direction, subject, description, outcome, nextActionAt, status, customFields });
   await createAuditLog({ tenantId: req.user.tenantId, userId: req.user.id, action: 'client_interaction.created', entityType: 'client_interaction', entityId: result.id, metadata: { companyId, contactId, channel, subject } });
   res.status(201).json(result);
 }
