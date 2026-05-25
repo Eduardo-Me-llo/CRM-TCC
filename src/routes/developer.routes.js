@@ -7,6 +7,8 @@ const router = express.Router();
 
 router.use(requireAuth, requireDeveloper);
 router.get('/summary', asyncHandler(controller.summary));
+router.get('/settings', asyncHandler(controller.getSettings));
+router.put('/settings', asyncHandler(controller.updateSettings));
 router.get('/tenants', asyncHandler(controller.listTenants));
 router.post('/tenants', asyncHandler(controller.createTenant));
 router.put('/tenants/:tenantId', asyncHandler(controller.updateTenant));

@@ -35,6 +35,23 @@ async function updatePreferences(userId, preferences) {
   return result.rows[0].preferences;
 }
 
+async function findPasswordHash(userId) {
+  const result = await query(`SELECT password_hash FROM users WHERE id = $1`, [userId]);
+  return result.rows[0]?.password_hash || null;
+}
+
+async function updatePassword(userId, passwordHash) {
+  const result = await query(
+    `UPDATE users
+        SET password_hash = $1,
+            updated_at = now()
+      WHERE id = $2
+      RETURNING id`,
+    [passwordHash, userId]
+  );
+  return result.rows[0] || null;
+}
+
 async function listTenantUsers(tenantId) {
   const result = await query(
     `SELECT id, tenant_id, name, email, role, status, created_at, updated_at
@@ -101,10 +118,12 @@ module.exports = {
   deleteTenantUser,
   findLoginUser,
   findMe,
+  findPasswordHash,
   findTenantMaxUsers,
   findTenantUser,
   isValidTenantRole,
   listTenantUsers,
   updatePreferences,
+  updatePassword,
   updateTenantUser
 };

@@ -40,6 +40,12 @@ async function initDatabase() {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
 
+    CREATE TABLE IF NOT EXISTS system_settings (
+      key TEXT PRIMARY KEY,
+      value JSONB NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+
     CREATE TABLE IF NOT EXISTS client_companies (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
       tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
@@ -95,6 +101,7 @@ async function initDatabase() {
       next_action_at TIMESTAMPTZ,
       status TEXT NOT NULL DEFAULT 'open',
       custom_fields JSONB NOT NULL DEFAULT '{}'::jsonb,
+      updated_by_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
@@ -144,6 +151,16 @@ async function initDatabase() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
 
+    CREATE TABLE IF NOT EXISTS login_verification_codes (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      email TEXT NOT NULL,
+      code_hash TEXT NOT NULL,
+      expires_at TIMESTAMPTZ NOT NULL,
+      used_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+
     CREATE INDEX IF NOT EXISTS idx_users_tenant_id ON users(tenant_id);
     CREATE INDEX IF NOT EXISTS idx_companies_tenant_id ON client_companies(tenant_id);
     CREATE INDEX IF NOT EXISTS idx_contacts_tenant_company ON client_contacts(tenant_id, company_id);
@@ -152,6 +169,7 @@ async function initDatabase() {
     CREATE INDEX IF NOT EXISTS idx_tasks_tenant_due ON crm_tasks(tenant_id, due_at);
     CREATE INDEX IF NOT EXISTS idx_audit_tenant ON audit_logs(tenant_id);
     CREATE INDEX IF NOT EXISTS idx_custom_fields_tenant_entity ON custom_fields(tenant_id, entity_type, sort_order);
+    CREATE INDEX IF NOT EXISTS idx_login_codes_user ON login_verification_codes(user_id, created_at DESC);
   `);
 
   await query(`
@@ -162,6 +180,13 @@ async function initDatabase() {
     ALTER TABLE client_companies ADD COLUMN IF NOT EXISTS custom_fields JSONB NOT NULL DEFAULT '{}'::jsonb;
     ALTER TABLE client_contacts ADD COLUMN IF NOT EXISTS custom_fields JSONB NOT NULL DEFAULT '{}'::jsonb;
     ALTER TABLE client_interactions ADD COLUMN IF NOT EXISTS custom_fields JSONB NOT NULL DEFAULT '{}'::jsonb;
+    ALTER TABLE client_interactions ADD COLUMN IF NOT EXISTS updated_by_user_id UUID REFERENCES users(id) ON DELETE SET NULL;
+  `);
+
+  await query(`
+    INSERT INTO system_settings (key, value)
+    VALUES ('login_email_code_enabled', 'true'::jsonb)
+    ON CONFLICT (key) DO NOTHING;
   `);
 
   const usersCount = await query(`SELECT COUNT(*)::int AS total FROM users`);

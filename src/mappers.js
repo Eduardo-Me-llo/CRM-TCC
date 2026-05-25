@@ -57,6 +57,8 @@ function mapInteraction(row) {
     contactName: row.contact_name,
     userId: row.user_id,
     userName: row.user_name,
+    updatedByUserId: row.updated_by_user_id,
+    updatedByUserName: row.updated_by_user_name,
     channel: row.channel,
     direction: row.direction,
     subject: row.subject,

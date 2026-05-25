@@ -7,5 +7,6 @@ const router = express.Router();
 
 router.get('/', requireAuth, asyncHandler(controller.me));
 router.put('/preferences', requireAuth, asyncHandler(controller.updatePreferences));
+router.put('/password', requireAuth, asyncHandler(controller.updatePassword));
 
 module.exports = router;

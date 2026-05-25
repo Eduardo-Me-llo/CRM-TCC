@@ -1,6 +1,7 @@
 const bcrypt = require('bcryptjs');
 const { ROLE_PERMISSIONS, ROLES } = require('../constants/roles');
 const developerModel = require('../models/developer.model');
+const systemSettingsModel = require('../models/system-settings.model');
 const userModel = require('../models/user.model');
 const { createAuditLog } = require('../services/audit.service');
 const { assertTenantDomainAllowed, ensureCanRemoveOrChangeUser } = require('../services/user-rules.service');
@@ -71,13 +72,25 @@ async function removeUser(req, res) {
   res.json({ ok: true });
 }
 
+async function getSettings(_req, res) {
+  res.json(await systemSettingsModel.getDeveloperSettings());
+}
+
+async function updateSettings(req, res) {
+  const result = await systemSettingsModel.updateDeveloperSettings(req.body || {});
+  await createAuditLog({ userId: req.user.id, action: 'developer.settings.updated', entityType: 'system_settings', metadata: result });
+  res.json(result);
+}
+
 module.exports = {
   createTenant,
   createUser,
+  getSettings,
   listTenants,
   listUsers,
   removeUser,
   summary,
+  updateSettings,
   updateTenant,
   updateUser
 };

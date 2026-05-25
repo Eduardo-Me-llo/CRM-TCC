@@ -4,6 +4,7 @@ const state = {
   route: location.hash.replace('#', '') || '',
   cache: {},
   alert: null,
+  pendingLogin: JSON.parse(sessionStorage.getItem('crm_pending_login') || 'null'),
   sidebarCollapsed: localStorage.getItem('crm_sidebar_collapsed') === 'true'
 };
 
@@ -112,6 +113,9 @@ function isAdminMaster() {
 }
 function isAdminOrMaster() {
   return state.user?.role === 'ADMIN_MASTER' || state.user?.role === 'ADMIN';
+}
+function canEditCompany() {
+  return ['ADMIN_MASTER', 'ADMIN', 'MANAGER'].includes(state.user?.role);
 }
 function setAlert(message, type = 'success') {
   state.alert = { message, type };
@@ -322,8 +326,10 @@ async function bootstrap() {
 function logout(update = true) {
   localStorage.removeItem('crm_token');
   localStorage.removeItem('crm_user');
+  sessionStorage.removeItem('crm_pending_login');
   state.token = null;
   state.user = null;
+  state.pendingLogin = null;
   state.cache = {};
   state.route = 'login';
   if (update) navigate('login');
@@ -337,6 +343,7 @@ function setSidebarCollapsed(collapsed) {
 
 function renderLogin() {
   document.body.className = '';
+  const pending = state.pendingLogin;
   $('#app').innerHTML = `
     <div class="login-page">
       <section class="login-hero">
@@ -356,11 +363,24 @@ function renderLogin() {
         <form class="login-card" id="loginForm">
           <div class="logo-row"><div class="logo">CRM</div><div><h2>Entrar no CRM</h2><div class="muted">Use seu e-mail institucional.</div></div></div>
           ${alertHtml()}
-          <div class="field"><label>E-mail</label><input class="input" name="email" type="email" value="" placeholder="seu.email@empresa.com" required /></div>
-          <div style="height:12px"></div>
-          <div class="field"><label>Senha</label><input class="input" name="password" type="password" value="123456" required /></div>
-          <div style="height:18px"></div>
-          <button class="btn primary" style="width:100%" type="submit">Entrar</button>
+          ${pending ? `
+            <div class="alert">
+              <strong>Codigo enviado</strong><br />
+              <span class="small">${esc(pending.message || `Confira o e-mail ${pending.email}.`)}</span>
+              ${pending.devCode ? `<br /><span class="small"><strong>Teste:</strong> use o codigo ${esc(pending.devCode)}</span>` : ''}
+            </div>
+            <div class="field"><label>Codigo de 5 digitos</label><input class="input" name="code" inputmode="numeric" maxlength="5" pattern="[0-9]{5}" required autofocus /></div>
+            <div style="height:18px"></div>
+            <button class="btn primary" style="width:100%" type="submit">Validar e entrar</button>
+            <div style="height:10px"></div>
+            <button class="btn ghost" style="width:100%" type="button" id="changeLoginEmail">Trocar e-mail</button>
+          ` : `
+            <div class="field"><label>E-mail</label><input class="input" name="email" type="email" value="" placeholder="seu.email@empresa.com" required /></div>
+            <div style="height:12px"></div>
+            <div class="field"><label>Senha</label><input class="input" name="password" type="password" required /></div>
+            <div style="height:18px"></div>
+            <button class="btn primary" style="width:100%" type="submit">Entrar</button>
+          `}
           <div style="height:16px"></div>
           <div class="alert">
             <strong>Contas úteis</strong><br />
@@ -370,14 +390,29 @@ function renderLogin() {
         </form>
       </section>
     </div>`;
+  $('#changeLoginEmail')?.addEventListener('click', () => {
+    state.pendingLogin = null;
+    sessionStorage.removeItem('crm_pending_login');
+    renderLogin();
+  });
   $('#loginForm').addEventListener('submit', async e => {
     e.preventDefault();
     const btn = e.submitter;
     btn.disabled = true;
     try {
-      const data = await api('/api/auth/login', { method: 'POST', body: JSON.stringify(formValues(e.currentTarget)) });
+      const values = formValues(e.currentTarget);
+      const data = pending
+        ? await api('/api/auth/verify-login', { method: 'POST', body: JSON.stringify({ email: pending.email, code: values.code }) })
+        : await api('/api/auth/login', { method: 'POST', body: JSON.stringify(values) });
+      if (data.requiresVerification) {
+        state.pendingLogin = { email: data.email, message: data.message, devCode: data.devCode };
+        sessionStorage.setItem('crm_pending_login', JSON.stringify(state.pendingLogin));
+        return renderLogin();
+      }
       state.token = data.token;
       state.user = data.user;
+      state.pendingLogin = null;
+      sessionStorage.removeItem('crm_pending_login');
       localStorage.setItem('crm_token', data.token);
       localStorage.setItem('crm_user', JSON.stringify(data.user));
       navigate(defaultRoute());
@@ -571,7 +606,7 @@ async function renderDeveloper() {
     if (route === 'developer-dashboard') return shell(await viewDeveloperDashboard());
     if (route === 'developer-tenants') return shell(await viewDeveloperTenants());
     if (route === 'developer-users') return shell(await viewDeveloperUsers());
-    if (route === 'developer-settings') return shell(viewDeveloperSettings());
+    if (route === 'developer-settings') return shell(await viewDeveloperSettings());
     return shell(viewForbidden());
   } catch (error) {
     setAlert(error.message, 'error');
@@ -888,13 +923,13 @@ async function openCompanyDetail(companyId) {
           <div class="tag-list">${(company.tags || []).map(t => `<span class="tag">${esc(t)}</span>`).join('')}</div>
           <div style="height:16px"></div>
           <div class="split-actions">
-            ${has('client_companies.update') ? `<button class="btn" type="button" id="editCompanyFromDetail">Editar empresa</button>` : ''}
+            ${canEditCompany() ? `<button class="btn" type="button" id="editCompanyFromDetail">Editar empresa</button>` : '<span class="badge">Somente leitura</span>'}
             ${has('client_contacts.create') ? `<button class="btn primary" type="button" id="newContactFromDetail">Novo contato</button>` : ''}
             ${has('tasks.create') ? `<button class="btn" type="button" id="newTaskFromCompanyDetail">Nova tarefa</button>` : ''}
           </div>
         </div>
         <div class="grid">
-          <div class="card pad"><h2>Contatos vinculados</h2><div style="height:12px"></div>${contacts.length ? contacts.map(c => `<div style="padding:10px 0;border-bottom:1px solid var(--border)"><strong>${esc(c.name)}</strong><div class="muted small">${esc(c.position || '-')} • ${esc(c.email || c.phone || c.whatsapp || '-')}</div></div>`).join('') : '<div class="empty">Nenhum contato.</div>'}</div>
+          <div class="card pad"><h2>Contatos vinculados</h2><div style="height:12px"></div>${contacts.length ? contacts.map(c => `<div style="padding:10px 0;border-bottom:1px solid var(--border)"><strong>${esc(c.name)}</strong><div class="muted small">${esc(c.position || '-')} • ${esc(c.email || c.phone || c.whatsapp || '-')}</div>${c.email && has('client_interactions.create') ? `<div style="height:8px"></div><button class="btn" type="button" data-email-contact="${c.id}">Enviar e-mail</button>` : ''}</div>`).join('') : '<div class="empty">Nenhum contato.</div>'}</div>
           <div class="card pad"><h2>Linha de relacionamento</h2><div style="height:12px"></div><div class="timeline">${interactions.length ? interactions.slice(0, 6).map(i => `<div class="timeline-item"><strong>${esc(i.subject)}</strong><div class="muted small">${esc(channelLabels[i.channel] || i.channel)} • ${fmtDate(i.createdAt)} • ${esc(i.contactName || 'Sem contato')}</div><p>${esc(i.description)}</p></div>`).join('') : '<div class="empty">Nenhuma interação.</div>'}</div></div>
         </div>
       </div>`,
@@ -904,6 +939,10 @@ async function openCompanyDetail(companyId) {
     $('#editCompanyFromDetail')?.addEventListener('click', () => { $('.modal-backdrop')?.remove(); openCompanyModal(company); });
     $('#newContactFromDetail')?.addEventListener('click', () => { $('.modal-backdrop')?.remove(); openContactModal({ companyId: company.id }); });
     $('#newTaskFromCompanyDetail')?.addEventListener('click', () => { $('.modal-backdrop')?.remove(); openTaskModal({ companyId: company.id }); });
+    $all('[data-email-contact]').forEach(btn => btn.addEventListener('click', () => {
+      const contact = contacts.find(c => c.id === btn.dataset.emailContact);
+      openEmailModal({ company, contact });
+    }));
   });
 }
 
@@ -931,7 +970,7 @@ function contactsTable(contacts) {
       ${customTableCells('client_contact', c)}
       <td>${fmtDateOnly(c.lastInteractionAt)}</td>
       <td>${statusBadge(c.status)}</td>
-      <td><div class="split-actions">${has('client_contacts.update') ? `<button class="btn" data-edit-contact="${c.id}">Editar</button>` : ''}${has('client_interactions.create') ? `<button class="btn primary" data-new-interaction-contact="${c.id}">Relacionar</button>` : ''}</div></td>
+      <td><div class="split-actions">${has('client_contacts.update') ? `<button class="btn" data-edit-contact="${c.id}">Editar</button>` : ''}${c.email && has('client_interactions.create') ? `<button class="btn" data-email-contact="${c.id}">E-mail</button>` : ''}${has('client_interactions.create') ? `<button class="btn primary" data-new-interaction-contact="${c.id}">Relacionar</button>` : ''}</div></td>
     </tr>`).join('')}
   </tbody></table></div>`;
 }
@@ -949,7 +988,12 @@ function bindContactRowActions() {
     const contact = state.cache.contacts.find(c => c.id === btn.dataset.newInteractionContact);
     btn.addEventListener('click', () => openInteractionModal({ companyId: contact.companyId, contactId: contact.id }));
   });
-  $all('[data-edit-contact], [data-new-interaction-contact]').forEach(btn => btn.addEventListener('click', event => event.stopPropagation()));
+  $all('[data-email-contact]').forEach(btn => {
+    const contact = state.cache.contacts.find(c => c.id === btn.dataset.emailContact);
+    const company = state.cache.companies.find(c => c.id === contact?.companyId);
+    btn.addEventListener('click', () => openEmailModal({ company, contact }));
+  });
+  $all('[data-edit-contact], [data-new-interaction-contact], [data-email-contact]').forEach(btn => btn.addEventListener('click', event => event.stopPropagation()));
 }
 function filterContacts() {
   const q = $('#contactSearch').value.toLowerCase();
@@ -1024,6 +1068,7 @@ async function openContactDetail(contactId) {
         </div>
         <div class="split-actions">
           ${has('client_contacts.update') ? `<button class="btn" type="button" id="editContactFromDetail">Editar contato</button>` : ''}
+          ${contact.email && has('client_interactions.create') ? `<button class="btn" type="button" id="emailContactFromDetail">Enviar e-mail</button>` : ''}
           ${has('client_interactions.create') ? `<button class="btn primary" type="button" id="newInteractionFromContactDetail">Novo relacionamento</button>` : ''}
         </div>
         <div class="detail-panel">
@@ -1035,6 +1080,7 @@ async function openContactDetail(contactId) {
   });
   setTimeout(() => {
     $('#editContactFromDetail')?.addEventListener('click', () => { $('.modal-backdrop')?.remove(); openContactModal(contact); });
+    $('#emailContactFromDetail')?.addEventListener('click', () => openEmailModal({ company: state.cache.companies?.find(c => c.id === contact.companyId), contact }));
     $('#newInteractionFromContactDetail')?.addEventListener('click', () => { $('.modal-backdrop')?.remove(); openInteractionModal({ companyId: contact.companyId, contactId: contact.id }); });
   });
 }
@@ -1060,7 +1106,7 @@ async function viewInteractions() {
 }
 function interactionsTable(interactions) {
   if (!interactions.length) return '<div class="card empty">Nenhum relacionamento registrado.</div>';
-  return `<div class="table-wrap"><table><thead><tr><th>Data</th><th>Empresa</th><th>Contato</th><th>Canal</th><th>Assunto</th><th>Responsável</th><th>Resultado</th>${customTableHeaders('client_interaction')}<th>Próxima ação</th><th>Status</th></tr></thead><tbody>
+  return `<div class="table-wrap"><table><thead><tr><th>Data</th><th>Empresa</th><th>Contato</th><th>Canal</th><th>Assunto</th><th>Responsável</th><th>Resultado</th>${customTableHeaders('client_interaction')}<th>Próxima ação</th><th>Status</th><th>Atualizado por</th></tr></thead><tbody>
     ${interactions.map(i => `<tr class="clickable" data-interaction-detail="${i.id}">
       <td>${fmtDate(i.createdAt)}</td>
       <td>${esc(i.companyName || '-')}</td>
@@ -1072,6 +1118,7 @@ function interactionsTable(interactions) {
       ${customTableCells('client_interaction', i)}
       <td>${fmtDateOnly(i.nextActionAt)}</td>
       <td>${statusBadge(i.status)}</td>
+      <td>${esc(i.updatedByUserName || '-')}</td>
     </tr>`).join('')}
   </tbody></table></div>`;
 }
@@ -1126,6 +1173,40 @@ function openInteractionModal(prefill = {}) {
   });
 }
 
+function openEmailModal({ company = null, contact = null } = {}) {
+  if (!company || !contact?.email) {
+    setAlert('Selecione um contato com e-mail cadastrado.', 'error');
+    return render();
+  }
+  modal({
+    title: `Enviar e-mail para ${contact.name}`,
+    submitText: 'Enviar pelo CRM',
+    body: `
+      <div class="form-grid">
+        <div class="field"><label>Empresa</label><input class="input" value="${esc(company.name || '-')}" disabled /></div>
+        <div class="field"><label>Destinatario</label><input class="input" name="to" type="email" value="${esc(contact.email)}" required /></div>
+        <div class="field full"><label>Assunto *</label><input class="input" name="subject" value="Contato - ${esc(company.name || 'CRM')}" required /></div>
+        <div class="field full"><label>Mensagem *</label><textarea name="message" required placeholder="Escreva a mensagem para o cliente..."></textarea></div>
+        <div class="alert full">
+          O e-mail fica registrado automaticamente na linha de relacionamentos. Sem SMTP configurado, o sistema usa modo simulado para testes.
+        </div>
+      </div>`,
+    onSubmit: async values => {
+      const result = await api('/api/client-interactions/send-email', {
+        method: 'POST',
+        body: JSON.stringify({
+          companyId: company.id,
+          contactId: contact.id,
+          to: values.to,
+          subject: values.subject,
+          message: values.message
+        })
+      });
+      setAlert(result.email?.simulated ? 'E-mail registrado em modo simulado.' : 'E-mail enviado e registrado no relacionamento.');
+    }
+  });
+}
+
 function openInteractionDetail(interactionId) {
   const interaction = state.cache.interactions?.find(i => i.id === interactionId);
   if (!interaction) return;
@@ -1148,14 +1229,30 @@ function openInteractionDetail(interactionId) {
           <div><span class="detail-label">Responsável</span><strong>${esc(interaction.userName || '-')}</strong></div>
           <div><span class="detail-label">Próxima ação</span><strong>${fmtDate(interaction.nextActionAt)}</strong></div>
           <div><span class="detail-label">Resultado</span><strong>${esc(interaction.outcome || '-')}</strong></div>
+          <div><span class="detail-label">Atualizado por</span><strong>${esc(interaction.updatedByUserName || '-')}</strong></div>
           ${customFieldsDetailHtml('client_interaction', interaction)}
         </div>
+        ${has('client_interactions.update') ? `<div class="detail-panel"><h3>Status do relacionamento</h3><div class="form-grid"><div class="field"><label>Status</label><select class="select" id="interactionStatusUpdate"><option value="open" ${interaction.status === 'open' ? 'selected' : ''}>Aberto</option><option value="done" ${interaction.status === 'done' ? 'selected' : ''}>Concluído</option><option value="lost" ${interaction.status === 'lost' ? 'selected' : ''}>Perdido</option></select></div><div class="field"><label>&nbsp;</label><button class="btn primary" type="button" id="saveInteractionStatus">Atualizar status</button></div></div></div>` : ''}
         <div class="detail-panel">
           <h3>Diálogo registrado</h3>
           <p>${esc(interaction.description)}</p>
         </div>
       </div>`,
     onSubmit: async () => {}
+  });
+  setTimeout(() => {
+    $('#saveInteractionStatus')?.addEventListener('click', async () => {
+      try {
+        await api(`/api/client-interactions/${interaction.id}`, { method: 'PUT', body: JSON.stringify({ status: $('#interactionStatusUpdate').value }) });
+        $('.modal-backdrop')?.remove();
+        setAlert('Status atualizado.');
+        await render();
+      } catch (error) {
+        $('.modal-backdrop')?.remove();
+        setAlert(error.message, 'error');
+        await render();
+      }
+    });
   });
 }
 
@@ -1371,10 +1468,12 @@ async function viewSettings() {
         ${toggleRow('weeklyReport', 'Relatório semanal', 'Toda segunda-feira', Boolean(p.weeklyReport))}
       </div></div>
       <div class="card"><div class="card-head"><div><h2>Interface</h2><div class="muted small">Aparência e ritmo visual</div></div><div class="page-title-icon">🎨</div></div><div class="card-body">
-        <div class="field"><label>Tema</label><select class="select" id="theme"><option ${p.theme !== 'dark' ? 'selected' : ''} value="light">Claro</option><option ${p.theme === 'dark' ? 'selected' : ''} value="dark">Escuro</option><option ${p.theme === 'system' ? 'selected' : ''} value="system">Sistema</option></select></div><br />
-        <div class="field"><label>Densidade</label><select class="select" id="density"><option ${p.density !== 'compact' ? 'selected' : ''} value="comfortable">Confortável</option><option ${p.density === 'compact' ? 'selected' : ''} value="compact">Compacta</option></select></div><br />
         ${toggleRow('animations', 'Animações', 'Transições e efeitos visuais', p.animations !== false)}
         ${toggleRow('collapseSidebar', 'Sidebar colapsada por padrão', 'Abrir sistema com menu reduzido', Boolean(p.collapseSidebar))}
+      </div></div>
+      <div class="card"><div class="card-head"><div><h2>Seguranca</h2><div class="muted small">Acesso da sua conta</div></div><div class="page-title-icon">SEC</div></div><div class="card-body">
+        <p class="muted">Atualize sua senha periodicamente para reduzir riscos de acesso indevido.</p>
+        <button class="btn primary" id="changePassword" type="button">Trocar senha</button>
       </div></div>
     </div>
     ${isAdminMaster() ? customFieldsSettingsHtml() : ''}`;
@@ -1432,7 +1531,26 @@ function openCustomFieldModal(field = null) {
   });
 }
 
+function openChangePasswordModal() {
+  modal({
+    title: 'Trocar senha',
+    submitText: 'Atualizar senha',
+    body: `
+      <div class="form-grid">
+        <div class="field full"><label>Senha atual *</label><input class="input" name="currentPassword" type="password" required /></div>
+        <div class="field"><label>Nova senha *</label><input class="input" name="newPassword" type="password" minlength="8" required /></div>
+        <div class="field"><label>Confirmar nova senha *</label><input class="input" name="confirmPassword" type="password" minlength="8" required /></div>
+        <div class="alert full">Use pelo menos 8 caracteres. A nova senha deve ser diferente da senha atual.</div>
+      </div>`,
+    onSubmit: async values => {
+      await api('/api/me/password', { method: 'PUT', body: JSON.stringify(values) });
+      setAlert('Senha atualizada com sucesso.');
+    }
+  });
+}
+
 function bindSettingsEvents() {
+  $('#changePassword')?.addEventListener('click', () => openChangePasswordModal());
   $('#newCustomField')?.addEventListener('click', () => openCustomFieldModal());
   $all('[data-edit-custom-field]').forEach(btn => btn.addEventListener('click', () => {
     const field = (state.cache.customFields || []).find(item => item.id === btn.dataset.editCustomField);
@@ -1451,7 +1569,7 @@ function bindSettingsEvents() {
     }
   }));
   $('#restorePrefs')?.addEventListener('click', async () => {
-    const preferences = { notifyAssigned: true, notifyComments: true, notifySla: true, weeklyReport: false, theme: 'light', density: 'comfortable', animations: true, collapseSidebar: false };
+    const preferences = { notifyAssigned: true, notifyComments: true, notifySla: true, weeklyReport: false, animations: true, collapseSidebar: false };
     const result = await api('/api/me/preferences', { method: 'PUT', body: JSON.stringify({ preferences }) });
     state.user.preferences = result.preferences;
     localStorage.setItem('crm_user', JSON.stringify(state.user));
@@ -1464,8 +1582,6 @@ function bindSettingsEvents() {
       notifyComments: $('#notifyComments').checked,
       notifySla: $('#notifySla').checked,
       weeklyReport: $('#weeklyReport').checked,
-      theme: $('#theme').value,
-      density: $('#density').value,
       animations: $('#animations').checked,
       collapseSidebar: $('#collapseSidebar').checked
     };
@@ -1545,14 +1661,30 @@ function bindDeveloperUsersEvents() {
   bindUserRowActions(true);
 }
 
-function viewDeveloperSettings() {
+async function viewDeveloperSettings() {
+  const settings = await api('/api/developer/settings');
+  setTimeout(bindDeveloperSettingsEvents);
   return `${pageHeader('Configurações do Desenvolvedor', 'Configurações globais da plataforma.', '⚙')}
     <div class="grid grid-2">
       <div class="card pad"><h2>Segurança SaaS</h2><p class="muted">Esta entrega possui autenticação JWT, hash de senha, isolamento por tenant_id e validação de permissões nas rotas do backend.</p></div>
+      <div class="card pad"><h2>Código por e-mail no login</h2><p class="muted">Quando ativo, usuários precisam validar um código de 5 dígitos antes de entrar.</p><div style="height:12px"></div><button class="btn ${settings.loginEmailCodeEnabled ? 'success' : ''}" id="toggleLoginEmailCode" type="button">${settings.loginEmailCodeEnabled ? 'Desativar validação por e-mail' : 'Ativar validação por e-mail'}</button></div>
       <div class="card pad"><h2>Banco de dados</h2><p class="muted">O sistema utiliza PostgreSQL. As tabelas são criadas automaticamente no primeiro start e os dados de demonstração são populados se o banco estiver vazio.</p></div>
       <div class="card pad"><h2>Regras importantes</h2><p class="muted">Não é permitido deixar uma empresa contratante com menos de 2 administradores gerais ativos. O domínio institucional é validado no cadastro de colaboradores.</p></div>
-      <div class="card pad"><h2>Próximas melhorias</h2><p class="muted">Filas Redis para e-mail/automações, refresh token, testes automatizados, importador Excel e deploy em nuvem.</p></div>
     </div>`;
+}
+
+function bindDeveloperSettingsEvents() {
+  $('#toggleLoginEmailCode')?.addEventListener('click', async () => {
+    try {
+      const current = await api('/api/developer/settings');
+      await api('/api/developer/settings', { method: 'PUT', body: JSON.stringify({ loginEmailCodeEnabled: !current.loginEmailCodeEnabled }) });
+      setAlert('Configuração de login atualizada.');
+      await render();
+    } catch (error) {
+      setAlert(error.message, 'error');
+      await render();
+    }
+  });
 }
 
 bootstrap();

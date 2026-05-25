@@ -3,11 +3,12 @@ const { mapInteraction } = require('../mappers');
 
 async function list(tenantId, { companyId = '', contactId = '', status = '', channel = '', q = '' } = {}) {
   const result = await query(
-    `SELECT i.*, c.name AS company_name, ct.name AS contact_name, u.name AS user_name
+    `SELECT i.*, c.name AS company_name, ct.name AS contact_name, u.name AS user_name, ub.name AS updated_by_user_name
        FROM client_interactions i
        JOIN client_companies c ON c.id = i.company_id AND c.tenant_id = i.tenant_id
        LEFT JOIN client_contacts ct ON ct.id = i.contact_id AND ct.tenant_id = i.tenant_id
        LEFT JOIN users u ON u.id = i.user_id
+       LEFT JOIN users ub ON ub.id = i.updated_by_user_id
       WHERE i.tenant_id = $1
         AND ($2 = '' OR i.company_id::text = $2)
         AND ($3 = '' OR i.contact_id::text = $3)
@@ -42,10 +43,11 @@ async function update(tenantId, interactionId, data) {
             next_action_at = COALESCE($6, next_action_at),
             status = COALESCE($7, status),
             custom_fields = COALESCE($8, custom_fields),
+            updated_by_user_id = COALESCE($9, updated_by_user_id),
             updated_at = now()
-      WHERE id = $9 AND tenant_id = $10
+      WHERE id = $10 AND tenant_id = $11
       RETURNING *`,
-    [data.channel || null, data.direction || null, data.subject || null, data.description || null, data.outcome || null, data.nextActionAt || null, data.status || null, data.customFields == null ? null : JSON.stringify(data.customFields), interactionId, tenantId]
+    [data.channel || null, data.direction || null, data.subject || null, data.description || null, data.outcome || null, data.nextActionAt || null, data.status || null, data.customFields == null ? null : JSON.stringify(data.customFields), data.updatedByUserId || null, interactionId, tenantId]
   );
   return result.rows[0] ? mapInteraction(result.rows[0]) : null;
 }
