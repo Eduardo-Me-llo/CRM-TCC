@@ -140,6 +140,14 @@ async function initDatabase() {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
 
+    CREATE TABLE IF NOT EXISTS notification_dismissals (
+      tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+      user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      notification_key TEXT NOT NULL,
+      dismissed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      PRIMARY KEY (user_id, notification_key)
+    );
+
     CREATE TABLE IF NOT EXISTS audit_logs (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
       tenant_id UUID REFERENCES tenants(id) ON DELETE CASCADE,
@@ -167,6 +175,7 @@ async function initDatabase() {
     CREATE INDEX IF NOT EXISTS idx_interactions_tenant_company ON client_interactions(tenant_id, company_id);
     CREATE INDEX IF NOT EXISTS idx_tasks_tenant_status ON crm_tasks(tenant_id, status);
     CREATE INDEX IF NOT EXISTS idx_tasks_tenant_due ON crm_tasks(tenant_id, due_at);
+    CREATE INDEX IF NOT EXISTS idx_notification_dismissals_tenant_user ON notification_dismissals(tenant_id, user_id);
     CREATE INDEX IF NOT EXISTS idx_audit_tenant ON audit_logs(tenant_id);
     CREATE INDEX IF NOT EXISTS idx_custom_fields_tenant_entity ON custom_fields(tenant_id, entity_type, sort_order);
     CREATE INDEX IF NOT EXISTS idx_login_codes_user ON login_verification_codes(user_id, created_at DESC);

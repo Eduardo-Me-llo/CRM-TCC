@@ -8,6 +8,8 @@ const state = {
   sidebarCollapsed: localStorage.getItem('crm_sidebar_collapsed') === 'true'
 };
 
+let notificationPollTimer = null;
+
 const roleLabels = {
   DEVELOPER: 'Desenvolvedor do CRM',
   ADMIN_MASTER: 'Admin Master',
@@ -321,9 +323,12 @@ async function bootstrap() {
   if (!state.route || state.route === 'login') state.route = defaultRoute();
   if (!location.hash) location.hash = state.route;
   await render();
+  if (state.token && !isDeveloper()) startNotificationPolling();
 }
 
 function logout(update = true) {
+  clearInterval(notificationPollTimer);
+  notificationPollTimer = null;
   localStorage.removeItem('crm_token');
   localStorage.removeItem('crm_user');
   sessionStorage.removeItem('crm_pending_login');
@@ -339,6 +344,119 @@ function setSidebarCollapsed(collapsed) {
   state.sidebarCollapsed = collapsed;
   localStorage.setItem('crm_sidebar_collapsed', String(collapsed));
   $('.app-shell')?.classList.toggle('sidebar-collapsed', collapsed);
+}
+
+async function startNotificationPolling() {
+  if (notificationPollTimer) return;
+  await refreshNotifications();
+  notificationPollTimer = setInterval(refreshNotifications, 60000);
+}
+
+async function refreshNotifications() {
+  if (!state.token || isDeveloper()) return;
+  try {
+    updateNotificationsUI(await api('/api/notifications'));
+  } catch (error) {
+    console.error('Erro ao buscar notificações:', error);
+  }
+}
+
+function updateNotificationsUI(notifications) {
+  state.cache.notifications = notifications || [];
+  const unreadCount = notifications ? notifications.length : 0;
+  const badge = $('#notificationsBadge');
+  if (badge) {
+    if (unreadCount > 0) {
+      badge.textContent = unreadCount > 9 ? '9+' : unreadCount;
+      badge.style.display = 'flex';
+    } else {
+      badge.style.display = 'none';
+    }
+  }
+
+  const panel = $('#notificationsPanel');
+  if (panel) {
+    const list = $('#notificationsList', panel);
+    if (!notifications || notifications.length === 0) {
+      list.innerHTML = '<div class="empty mini">Sem notificações no momento.</div>';
+    } else {
+      list.innerHTML = notifications.map(notif => `
+        <div class="notification-item notification-${esc(notif.severity)}">
+          <div class="notification-title">${esc(notif.title)}</div>
+          <div class="notification-message">${esc(notif.message)}</div>
+          <div class="notification-time">${fmtDate(notif.createdAt)}</div>
+          <div class="notification-actions">
+            <button class="btn ghost" type="button" data-notification-open="${esc(notif.route)}">Abrir</button>
+            <button class="btn ghost" type="button" data-notification-dismiss="${esc(notif.id)}">Dispensar</button>
+          </div>
+        </div>
+      `).join('');
+    }
+  }
+}
+
+function closeNotificationsOnOutsideClick(event) {
+  const bell = $('#notificationsBell');
+  const panel = $('#notificationsPanel');
+  if (bell && panel && !bell.contains(event.target) && !panel.contains(event.target)) {
+    panel.classList.remove('open');
+    bell.setAttribute('aria-expanded', 'false');
+  }
+}
+
+function bindNotificationsUI() {
+  const bell = $('#notificationsBell');
+  const panel = $('#notificationsPanel');
+  const closeBtn = $('#closeNotificationsPanel');
+  const dismissAllBtn = $('#dismissAllNotifications');
+  const list = $('#notificationsList');
+
+  if (bell && panel) {
+    bell.addEventListener('click', e => {
+      e.stopPropagation();
+      panel.classList.toggle('open');
+      bell.setAttribute('aria-expanded', String(panel.classList.contains('open')));
+    });
+
+    if (closeBtn) {
+      closeBtn.addEventListener('click', () => {
+        panel.classList.remove('open');
+        bell.setAttribute('aria-expanded', 'false');
+      });
+    }
+
+    document.removeEventListener('click', closeNotificationsOnOutsideClick);
+    document.addEventListener('click', closeNotificationsOnOutsideClick);
+
+    dismissAllBtn?.addEventListener('click', async () => {
+      try {
+        await api('/api/notifications/dismiss-all', { method: 'POST' });
+        await refreshNotifications();
+      } catch (error) {
+        setAlert(error.message, 'error');
+        await render();
+      }
+    });
+
+    list?.addEventListener('click', async event => {
+      const dismissButton = event.target.closest('[data-notification-dismiss]');
+      if (dismissButton) {
+        try {
+          await api(`/api/notifications/${encodeURIComponent(dismissButton.dataset.notificationDismiss)}/dismiss`, { method: 'POST' });
+          await refreshNotifications();
+        } catch (error) {
+          setAlert(error.message, 'error');
+          await render();
+        }
+        return;
+      }
+      const openButton = event.target.closest('[data-notification-open]');
+      if (openButton) {
+        panel.classList.remove('open');
+        navigate(openButton.dataset.notificationOpen);
+      }
+    });
+  }
 }
 
 function renderLogin() {
@@ -415,6 +533,7 @@ function renderLogin() {
       sessionStorage.removeItem('crm_pending_login');
       localStorage.setItem('crm_token', data.token);
       localStorage.setItem('crm_user', JSON.stringify(data.user));
+      if (!isDeveloper()) startNotificationPolling();
       navigate(defaultRoute());
     } catch (error) {
       setAlert(error.message, 'error');
@@ -450,6 +569,24 @@ function shell(content) {
             <input id="globalSearchInput" placeholder="Buscar empresas, contatos, relacionamentos..." autocomplete="off" />
             <div class="search-results" id="globalSearchResults"></div>
           </form>
+          ${!isDeveloper() ? `<div class="notifications-bell-wrapper">
+            <button class="notifications-bell" id="notificationsBell" type="button" title="Notificações" aria-expanded="false" aria-controls="notificationsPanel">
+              <span>🔔</span>
+              <span class="notifications-badge" id="notificationsBadge" style="display:none">0</span>
+            </button>
+            <div class="notifications-panel" id="notificationsPanel">
+              <div class="notifications-header">
+                <strong>Notificações</strong>
+                <div class="notification-header-actions">
+                  <button class="btn ghost" type="button" id="dismissAllNotifications">Limpar</button>
+                  <button class="btn ghost" type="button" id="closeNotificationsPanel" aria-label="Fechar">✕</button>
+                </div>
+              </div>
+              <div class="notifications-list" id="notificationsList">
+                <div class="empty mini">Carregando notificações...</div>
+              </div>
+            </div>
+          </div>` : ''}
           <div class="user-menu-wrap">
             <button class="user-chip" id="userMenuToggle" type="button">
               <div><strong>${esc(state.user.name)}</strong><div class="small user-role">${esc(roleLabels[state.user.role] || state.user.role)}</div></div>
@@ -474,6 +611,8 @@ function shell(content) {
   $('#logoutMenuBtn')?.addEventListener('click', () => logout(true));
   $('#sidebarToggle')?.addEventListener('click', () => setSidebarCollapsed(!state.sidebarCollapsed));
   bindGlobalSearch();
+  bindNotificationsUI();
+  updateNotificationsUI(state.cache.notifications || []);
   $('#userMenuToggle')?.addEventListener('click', event => {
     event.stopPropagation();
     const menu = $('#userMenu');
@@ -651,7 +790,7 @@ async function viewCompanies() {
   state.cache.companies = companies;
   state.cache.users = users;
   setTimeout(bindCompanyEvents);
-  const actions = `${has('exports.read') ? '<button class="btn" id="exportCompanies">Exportar CSV</button>' : ''}${has('imports.create') ? '<button class="btn" id="importCompanies">Importar CSV</button>' : ''}${has('client_companies.create') ? '<button class="btn primary" id="newCompany">+ Nova empresa cliente</button>' : ''}`;
+  const actions = `${has('exports.read') ? '<button class="btn" id="exportCompanies">Exportar CSV</button>' : ''}${has('client_companies.create') ? '<button class="btn primary" id="newCompany">+ Nova empresa cliente</button>' : ''}`;
   return `${pageHeader('Empresas Clientes', 'Organizações atendidas, possíveis clientes ou antigos clientes.', '🏢', actions)}
     <div class="tabs">
       <button class="tab active">Empresas</button>
@@ -828,7 +967,6 @@ function bindCompanyEvents() {
       await render();
     }
   });
-  $('#importCompanies')?.addEventListener('click', () => openImportCompaniesModal());
   $('#companySearch')?.addEventListener('input', filterCompanies);
   $('#companyStatus')?.addEventListener('change', filterCompanies);
   $('#companyPipeline')?.addEventListener('change', filterCompanies);
@@ -881,23 +1019,7 @@ function openCompanyModal(company = null) {
   });
 }
 
-function openImportCompaniesModal() {
-  modal({
-    title: 'Importar empresas por CSV',
-    submitText: 'Importar empresas',
-    body: `
-      <div class="detail-stack">
-        <div class="alert">
-          Cabeçalhos aceitos: <code>name</code>, <code>tradeName</code>, <code>cnpj</code>, <code>industry</code>, <code>status</code>, <code>pipelineStage</code>, <code>expectedValue</code>, <code>source</code>, <code>city</code>, <code>state</code>, <code>notes</code>, <code>tags</code>.
-        </div>
-        <div class="field full"><label>Conteúdo CSV</label><textarea name="csv" style="min-height:220px" placeholder="name;industry;status;pipelineStage;source&#10;Empresa Exemplo;Tecnologia;prospect;new;Indicação" required></textarea></div>
-      </div>`,
-    onSubmit: async values => {
-      const result = await api('/api/client-companies/import', { method: 'POST', body: JSON.stringify(values) });
-      setAlert(`${result.imported} empresa(s) importada(s). ${result.skipped} linha(s) ignorada(s).`);
-    }
-  });
-}
+
 async function openCompanyDetail(companyId) {
   const [company, contacts, interactions] = await Promise.all([
     api(`/api/client-companies/${companyId}`),
@@ -1274,11 +1396,10 @@ async function viewTasks() {
     <div class="toolbar">
       <div class="filters">
         <input class="input" id="taskSearch" style="width:260px" placeholder="Buscar tarefa, empresa..." />
-        <select class="select" id="taskStatus" style="width:180px"><option value="">Todos os status</option>${Object.entries(taskStatusLabels).map(([key, label]) => `<option value="${key}">${esc(label)}</option>`).join('')}</select>
         <select class="select" id="taskCompany" style="width:240px"><option value="">Todas as empresas</option>${companies.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select>
       </div>
     </div>
-    <div id="taskArea">${tasksTable(tasks)}</div>`;
+    <div id="taskArea">${tasksKanban(tasks)}</div>`;
 }
 
 function tasksTable(tasks) {
@@ -1299,13 +1420,44 @@ function tasksTable(tasks) {
   </tbody></table></div>`;
 }
 
+function tasksKanban(tasks) {
+  if (!tasks.length) return '<div class="card empty">Nenhuma tarefa cadastrada.</div>';
+  const statuses = Object.keys(taskStatusLabels);
+  return `<div class="tasks-board">
+    ${statuses.map(status => {
+      const items = tasks.filter(t => (t.status || 'open') === status);
+      return `<section class="task-column">
+        <header><strong>${esc(taskStatusLabels[status])}</strong><span>${items.length}</span></header>
+        <div class="task-list" data-status="${status}">
+          ${items.map(t => `<article class="task-card" draggable="true" data-task-id="${t.id}" data-task-status="${t.status || 'open'}">
+            <div class="task-card-header">
+              <strong>${esc(t.title)}</strong>
+              ${priorityBadge(t.priority)}
+            </div>
+            <div class="muted small">${esc(t.description || t.companyName || '-')}</div>
+            <div class="task-meta">
+              <span>${esc(t.companyName || '-')}</span>
+              <span>${fmtDateOnly(t.dueAt)}</span>
+            </div>
+            <div class="task-assignee">${esc(t.assignedUserName || 'Não atribuído')}</div>
+            <div class="split-actions" style="margin-top:8px;">
+              ${has('tasks.update') ? `<button class="btn" data-edit-task="${t.id}">Editar</button>` : ''}
+              ${has('tasks.delete') ? `<button class="btn danger" data-delete-task="${t.id}">Remover</button>` : ''}
+            </div>
+          </article>`).join('') || '<div class="empty mini">Sem tarefas neste status.</div>'}
+        </div>
+      </section>`;
+    }).join('')}
+  </div>`;
+}
+
 function bindTaskEvents() {
   $all('[data-route]').forEach(btn => btn.addEventListener('click', () => navigate(btn.dataset.route)));
   $('#newTask')?.addEventListener('click', () => openTaskModal());
   $('#taskSearch')?.addEventListener('input', filterTasks);
-  $('#taskStatus')?.addEventListener('change', filterTasks);
   $('#taskCompany')?.addEventListener('change', filterTasks);
   bindTaskRowActions();
+  bindTaskDragAndDrop();
 }
 
 function bindTaskRowActions() {
@@ -1330,14 +1482,54 @@ function bindTaskRowActions() {
 
 function filterTasks() {
   const q = $('#taskSearch').value.toLowerCase();
-  const status = $('#taskStatus').value;
   const companyId = $('#taskCompany').value;
   const list = state.cache.tasks.filter(t => {
     const text = [t.title, t.description, t.companyName, t.contactName, t.assignedUserName].join(' ').toLowerCase();
-    return (!q || text.includes(q)) && (!status || t.status === status) && (!companyId || t.companyId === companyId);
+    return (!q || text.includes(q)) && (!companyId || t.companyId === companyId);
   });
-  $('#taskArea').innerHTML = tasksTable(list);
+  $('#taskArea').innerHTML = tasksKanban(list);
   bindTaskRowActions();
+  bindTaskDragAndDrop();
+}
+
+function bindTaskDragAndDrop() {
+  const cards = $all('[data-task-id]');
+  const lists = $all('.task-list');
+
+  cards.forEach(card => {
+    card.addEventListener('dragstart', e => {
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('taskId', card.dataset.taskId);
+    });
+    card.addEventListener('dragend', e => {
+      $all('.task-list').forEach(l => l.classList.remove('drag-over'));
+    });
+  });
+
+  lists.forEach(list => {
+    list.addEventListener('dragover', e => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      list.classList.add('drag-over');
+    });
+    list.addEventListener('dragleave', e => {
+      if (e.target === list) list.classList.remove('drag-over');
+    });
+    list.addEventListener('drop', async e => {
+      e.preventDefault();
+      list.classList.remove('drag-over');
+      const taskId = e.dataTransfer.getData('taskId');
+      const newStatus = list.dataset.status;
+      if (!taskId || !newStatus) return;
+      try {
+        await api(`/api/tasks/${taskId}`, { method: 'PUT', body: JSON.stringify({ status: newStatus }) });
+        setAlert('Tarefa movida.');
+        await render();
+      } catch (error) {
+        setAlert(error.message, 'error');
+      }
+    });
+  });
 }
 
 function openTaskModal(task = {}) {

@@ -1,9 +1,9 @@
 const { PIPELINE_STAGES } = require('../constants/roles');
 const companyModel = require('../models/company.model');
 const { createAuditLog } = require('../services/audit.service');
-const { csvField, parseCsv, toCsv } = require('../services/csv.service');
+const { toCsv } = require('../services/csv.service');
 const { isUuid } = require('../utils/http');
-const { normalizeEnum, parseMoney, parseTags } = require('../utils/normalizers');
+const { normalizeEnum, parseMoney } = require('../utils/normalizers');
 
 function normalizeCompanyCreatePayload(body) {
   return {
@@ -49,68 +49,28 @@ async function exportCsv(req, res) {
     tags: (row.tags || []).join(', ')
   }));
   const csv = toCsv(rows, [
-    { key: 'name', label: 'name' },
-    { key: 'tradeName', label: 'tradeName' },
-    { key: 'cnpj', label: 'cnpj' },
-    { key: 'industry', label: 'industry' },
-    { key: 'status', label: 'status' },
-    { key: 'pipelineStage', label: 'pipelineStage' },
-    { key: 'expectedValue', label: 'expectedValue' },
-    { key: 'expectedCloseDate', label: 'expectedCloseDate' },
-    { key: 'source', label: 'source' },
-    { key: 'ownerName', label: 'ownerName' },
-    { key: 'city', label: 'city' },
-    { key: 'state', label: 'state' },
-    { key: 'address', label: 'address' },
-    { key: 'notes', label: 'notes' },
-    { key: 'tags', label: 'tags' }
+    { key: 'name', label: 'Nome' },
+    { key: 'tradeName', label: 'Nome Fantasia' },
+    { key: 'cnpj', label: 'CNPJ' },
+    { key: 'industry', label: 'Ramo' },
+    { key: 'status', label: 'Status' },
+    { key: 'pipelineStage', label: 'Etapa do Funil' },
+    { key: 'expectedValue', label: 'Valor Estimado' },
+    { key: 'expectedCloseDate', label: 'Previsão de Fechamento' },
+    { key: 'source', label: 'Origem' },
+    { key: 'ownerName', label: 'Responsável' },
+    { key: 'city', label: 'Cidade' },
+    { key: 'state', label: 'Estado' },
+    { key: 'address', label: 'Endereço' },
+    { key: 'notes', label: 'Observações' },
+    { key: 'tags', label: 'Tags' }
   ]);
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
   res.setHeader('Content-Disposition', 'attachment; filename="empresas-clientes.csv"');
   res.send(`\uFEFF${csv}`);
 }
 
-async function importCsv(req, res) {
-  const rows = parseCsv(req.body.csv || '');
-  if (!rows.length) return res.status(400).json({ message: 'CSV vazio ou sem linhas de dados.' });
-  const summary = { imported: 0, skipped: 0, errors: [] };
 
-  for (const [index, row] of rows.entries()) {
-    const name = csvField(row, ['name', 'Nome', 'nome', 'empresa']);
-    if (!name) {
-      summary.skipped += 1;
-      summary.errors.push({ line: index + 2, message: 'Nome da empresa não informado.' });
-      continue;
-    }
-    const status = normalizeEnum(csvField(row, ['status', 'Status']) || 'prospect', ['active', 'inactive', 'prospect', 'former', 'paused'], 'prospect');
-    const pipelineStage = normalizeEnum(csvField(row, ['pipelineStage', 'etapa', 'Etapa']) || 'new', PIPELINE_STAGES, 'new');
-    try {
-      await companyModel.createImported(req.user.tenantId, req.user.id, {
-        name,
-        tradeName: csvField(row, ['tradeName', 'nomeFantasia', 'Nome fantasia']),
-        cnpj: csvField(row, ['cnpj', 'CNPJ']),
-        industry: csvField(row, ['industry', 'ramo', 'Ramo']),
-        status,
-        pipelineStage,
-        expectedValue: parseMoney(csvField(row, ['expectedValue', 'valor', 'Valor'])),
-        expectedCloseDate: csvField(row, ['expectedCloseDate', 'previsaoFechamento']),
-        source: csvField(row, ['source', 'origem', 'Origem']),
-        city: csvField(row, ['city', 'cidade', 'Cidade']),
-        state: csvField(row, ['state', 'estado', 'UF']),
-        address: csvField(row, ['address', 'endereco', 'Endereço']),
-        notes: csvField(row, ['notes', 'observacoes', 'Observações']),
-        tags: parseTags(csvField(row, ['tags', 'Tags', 'etiquetas']))
-      });
-      summary.imported += 1;
-    } catch (error) {
-      summary.skipped += 1;
-      summary.errors.push({ line: index + 2, message: error.message });
-    }
-  }
-
-  await createAuditLog({ tenantId: req.user.tenantId, userId: req.user.id, action: 'client_company.imported', entityType: 'client_company', metadata: summary });
-  res.status(201).json(summary);
-}
 
 async function get(req, res) {
   if (!isUuid(req.params.companyId)) return res.status(400).json({ message: 'ID da empresa cliente inválido.' });
@@ -149,7 +109,6 @@ module.exports = {
   create,
   exportCsv,
   get,
-  importCsv,
   list,
   remove,
   update
