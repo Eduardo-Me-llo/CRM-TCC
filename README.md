@@ -1,4 +1,4 @@
-# CRM SaaS v6 — Primeira grande entrega
+# CRM Multiempresa
 
 Esta versão substitui o MVP anterior por uma base mais profissional e vendável, com **PostgreSQL**, **login multiempresa**, **painel do desenvolvedor**, **empresas contratantes**, **usuários por empresa**, **clientes B2B separados em Empresas, Contatos e Relacionamentos** e **permissões reais no backend**.
 
