@@ -82,8 +82,8 @@ async function get(req, res) {
 async function create(req, res) {
   const data = normalizeCompanyCreatePayload(req.body);
   if (!data.name) return res.status(400).json({ message: 'Nome da empresa cliente é obrigatório.' });
-  if (!data.ownerUserId) return res.status(400).json({ message: 'Responsável interno é obrigatório.' });
   if (!data.cnpj || !validateCNPJ(data.cnpj)) return res.status(400).json({ message: 'CNPJ inválido.' });
+  data.ownerUserId = data.ownerUserId || req.user.id;
   const result = await companyModel.create(req.user.tenantId, req.user.id, data);
   await createAuditLog({ tenantId: req.user.tenantId, userId: req.user.id, action: 'client_company.created', entityType: 'client_company', entityId: result.id, metadata: { name: data.name, pipelineStage: data.pipelineStage } });
   res.status(201).json(result);

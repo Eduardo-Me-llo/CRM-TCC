@@ -5,7 +5,8 @@ const state = {
   cache: {},
   alert: null,
   pendingLogin: JSON.parse(sessionStorage.getItem('crm_pending_login') || 'null'),
-  sidebarCollapsed: localStorage.getItem('crm_sidebar_collapsed') === 'true'
+  sidebarCollapsed: localStorage.getItem('crm_sidebar_collapsed') === 'true',
+  authMode: 'login'
 };
 
 let notificationPollTimer = null;
@@ -229,7 +230,7 @@ async function api(path, options = {}) {
   let data = null;
   try { data = text ? JSON.parse(text) : null; } catch { data = text; }
   if (!response.ok) {
-    const message = data?.message || 'Erro ao processar requisição.';
+    const message = data?.message || `${response.status} ${response.statusText}` || 'Erro ao processar requisição.';
     throw new Error(message);
   }
   return data;
@@ -288,11 +289,12 @@ function taskStatusBadge(status) {
   return `<span class="badge task-${esc(status || 'open')}">${esc(taskStatusLabels[status] || status || '-')}</span>`;
 }
 
-function modal({ title, body, submitText = 'Salvar', onSubmit }) {
+function modal({ title, body, submitText = 'Salvar', onSubmit, size = '' }) {
   const el = document.createElement('div');
   el.className = 'modal-backdrop';
+  const sizeClass = size ? ` ${esc(size)}` : '';
   el.innerHTML = `
-    <form class="modal" id="modalForm">
+    <form class="modal${sizeClass}" id="modalForm">
       <header>
         <div>
           <h2>${esc(title)}</h2>
@@ -552,13 +554,15 @@ function bindNotificationsUI() {
 function renderLogin() {
   document.body.className = '';
   const pending = state.pendingLogin;
+  const isRegister = state.authMode === 'register';
+
   $('#app').innerHTML = `
     <div class="login-page">
       <section class="login-hero">
         <div>
           <div class="logo-row"><div class="logo">CRM</div><div><strong>CRM</strong><div>Multiempresa</div></div></div>
-          <h1>Gestão de relacionamento pronta para empresas, contatos e histórico completo.</h1>
-          <p>Painel do desenvolvedor, cadastro de empresas contratantes, usuários por empresa, login multiempresa, banco PostgreSQL e regras de permissão no backend.</p>
+          <h1>${isRegister ? 'Cadastre sua empresa e o admin master' : 'Gestão de relacionamento pronta para empresas, contatos e histórico completo.'}</h1>
+          <p>${isRegister ? 'Crie sua conta empresarial, configure o domínio e tenha o administrador principal pronto para usar o CRM.' : 'Painel do desenvolvedor, cadastro de empresas contratantes, usuários por empresa, login multiempresa, banco PostgreSQL e regras de permissão no backend.'}</p>
           <div class="hero-grid">
             <div class="hero-card"><strong>TCC</strong><span>Projeto para o TCC</span></div>
             <div class="hero-card"><strong>B2B</strong><span>Empresas, contatos e relacionamentos</span></div>
@@ -569,7 +573,7 @@ function renderLogin() {
       </section>
       <section class="login-form-wrap">
         <form class="login-card" id="loginForm">
-          <div class="logo-row"><div class="logo">CRM</div><div><h2>Entrar no CRM</h2><div class="muted">Use seu e-mail institucional.</div></div></div>
+          <div class="logo-row"><div class="logo">CRM</div><div><h2>${isRegister ? 'Novo cadastro' : 'Entrar no CRM'}</h2><div class="muted">${isRegister ? 'Abra sua empresa com o admin master.' : 'Use seu e-mail institucional.'}</div></div></div>
           ${alertHtml()}
           ${pending ? `
             <div class="alert">
@@ -582,6 +586,16 @@ function renderLogin() {
             <button class="btn primary" style="width:100%" type="submit">Validar e entrar</button>
             <div style="height:10px"></div>
             <button class="btn ghost" style="width:100%" type="button" id="changeLoginEmail">Trocar e-mail</button>
+          ` : isRegister ? `
+            <div class="field"><label>Nome da empresa *</label><input class="input" name="tenantName" type="text" placeholder="Nome da empresa" required /></div>
+            <div class="field"><label>Domínio *</label><input class="input" name="tenantDomain" type="text" placeholder="empresa.com" required /></div>
+            <div class="field"><label>Nome do admin master *</label><input class="input" name="adminName" type="text" placeholder="Nome completo" required /></div>
+            <div class="field"><label>E-mail do admin *</label><input class="input" name="adminEmail" type="email" placeholder="admin@empresa.com" required /></div>
+            <div class="field"><label>Senha *</label><input class="input" name="adminPassword" type="password" required /></div>
+            <div class="field"><label>Confirme a senha *</label><input class="input" name="adminPasswordConfirm" type="password" required /></div>
+            <div class="muted small" style="margin-top:6px;margin-bottom:8px">Dica: use ao menos 8 caracteres, misture letras e números.</div>
+            <div style="height:12px"></div>
+            <button class="btn primary" style="width:100%" type="submit">Criar conta</button>
           ` : `
             <div class="field"><label>E-mail</label><input class="input" name="email" type="email" value="" placeholder="seu.email@empresa.com" required /></div>
             <div style="height:12px"></div>
@@ -589,37 +603,65 @@ function renderLogin() {
             <div style="height:18px"></div>
             <button class="btn primary" style="width:100%" type="submit">Entrar</button>
           `}
-          <div style="height:16px"></div>
-          <div class="alert">
-            <strong></strong><br />
-            <span class="small"></span><br />
-            <span class="small"></span>
-          </div>
+          <div style="height:18px"></div>
+          ${pending ? '' : `<div class="auth-actions">${isRegister ? `<button class="btn ghost" type="button" id="cancelRegister">Já tenho conta</button>` : `<button class="btn ghost" type="button" id="showRegister">Cadastrar nova empresa</button>`}</div>`}
+          
+          
         </form>
       </section>
     </div>`;
+
+  if (!pending) {
+    $('#showRegister')?.addEventListener('click', () => {
+      state.authMode = 'register';
+      renderLogin();
+    });
+    $('#cancelRegister')?.addEventListener('click', () => {
+      state.authMode = 'login';
+      renderLogin();
+    });
+  }
+
   $('#changeLoginEmail')?.addEventListener('click', () => {
     state.pendingLogin = null;
     sessionStorage.removeItem('crm_pending_login');
     renderLogin();
   });
+
   $('#loginForm').addEventListener('submit', async e => {
     e.preventDefault();
     const btn = e.submitter;
     btn.disabled = true;
     try {
       const values = formValues(e.currentTarget);
-      const data = pending
-        ? await api('/api/auth/verify-login', { method: 'POST', body: JSON.stringify({ email: pending.email, code: values.code }) })
-        : await api('/api/auth/login', { method: 'POST', body: JSON.stringify(values) });
+      let data;
+      if (pending) {
+        data = await api('/api/auth/verify-login', { method: 'POST', body: JSON.stringify({ email: pending.email, code: values.code }) });
+      } else if (isRegister) {
+        if (values.adminPassword !== values.adminPasswordConfirm) {
+          throw new Error('As senhas não coincidem.');
+        }
+        data = await api('/api/auth/register', { method: 'POST', body: JSON.stringify(values) });
+      } else {
+        data = await api('/api/auth/login', { method: 'POST', body: JSON.stringify(values) });
+      }
       if (data.requiresVerification) {
         state.pendingLogin = { email: data.email, message: data.message, devCode: data.devCode };
         sessionStorage.setItem('crm_pending_login', JSON.stringify(state.pendingLogin));
         return renderLogin();
       }
+      if (isRegister) {
+        setAlert('Conta criada com sucesso! Faça login agora.', 'success');
+        state.authMode = 'login';
+        state.pendingLogin = null;
+        sessionStorage.removeItem('crm_pending_login');
+        renderLogin();
+        return;
+      }
       state.token = data.token;
       state.user = data.user;
       state.pendingLogin = null;
+      state.authMode = 'login';
       sessionStorage.removeItem('crm_pending_login');
       localStorage.setItem('crm_token', data.token);
       localStorage.setItem('crm_user', JSON.stringify(data.user));
@@ -643,7 +685,7 @@ function shell(content) {
         <div class="side-head">
           <div class="logo">${isDeveloper() ? 'DEV' : 'CRM'}</div>
           <div><div class="side-title">${isDeveloper() ? 'Painel SaaS' : esc(state.user.tenantName || 'CRM')}</div><div class="side-subtitle">${isDeveloper() ? 'Administração global' : esc(state.user.tenantDomain || '')}</div></div>
-          <button class="sidebar-toggle" id="sidebarToggle" type="button" title="${state.sidebarCollapsed ? 'Expandir menu' : 'Recolher menu'}">${state.sidebarCollapsed ? '>' : '<'}</button>
+          <button class="sidebar-toggle" id="sidebarToggle" type="button" aria-label="${state.sidebarCollapsed ? 'Expandir menu' : 'Recolher menu'}" title="${state.sidebarCollapsed ? 'Expandir menu' : 'Recolher menu'}"><span class="sidebar-toggle-icon">${state.sidebarCollapsed ? '›' : '‹'}</span></button>
         </div>
         ${nav}
         <div class="sidebar-footer">
@@ -894,7 +936,7 @@ async function viewCompanies() {
       </div>
       <div class="muted small"></div>
     </div>
-    <div id="companyArea">${companiesTable(companies)}</div>`;
+    <div id="companyArea" class="company-area-full">${companiesTable(companies)}</div>`;
 }
 
 async function viewProspects() {
@@ -924,8 +966,23 @@ async function viewProspects() {
       </div>
       <div class="muted small">${prospects.length} empresa(s) em prospecção</div>
     </div>
-    <div class="muted small" style="margin:10px 0 0;">Arraste os cards entre as etapas do funil para movimentar a prospecção rapidamente.</div>
+    <div class="prospect-summary">${prospectSummaryCards(prospects)}</div>
+    <div class="kanban-hint"><strong>Funil de prospecção</strong><span>Arraste os cards entre as colunas para atualizar a etapa da oportunidade.</span></div>
     <div id="prospectArea">${prospectsBoard(prospects)}</div>`;
+}
+
+function prospectSummaryCards(prospects) {
+  const totalValue = prospects.reduce((sum, c) => sum + Number(c.expectedValue || 0), 0);
+  const overdue = prospects.filter(c => c.expectedCloseDate && new Date(c.expectedCloseDate) < new Date()).length;
+  const nextActions = prospects.filter(c => c.nextActionAt).length;
+  const won = prospects.filter(c => c.pipelineStage === 'won').length;
+  return [
+    ['Oportunidades', prospects.length],
+    ['Valor estimado', fmtMoney(totalValue)],
+    ['Com próxima ação', nextActions],
+    ['Vencidas', overdue],
+    ['Fechadas', won]
+  ].map(([label, value]) => `<div class="prospect-stat"><span>${esc(label)}</span><strong>${esc(value)}</strong></div>`).join('');
 }
 
 function prospectsTable(prospects) {
@@ -954,19 +1011,27 @@ function prospectsBoard(prospects) {
     ${stages.map(stage => {
       const items = prospects.filter(c => (c.pipelineStage || 'new') === stage);
       const total = items.reduce((sum, c) => sum + Number(c.expectedValue || 0), 0);
-      return `<section class="pipeline-column">
-        <header><strong>${esc(pipelineStageLabels[stage])}</strong><span>${items.length}</span></header>
+      const overdueCount = items.filter(c => c.expectedCloseDate && new Date(c.expectedCloseDate) < new Date()).length;
+      return `<section class="pipeline-column" data-stage-column="${stage}">
+        <header>
+          <div class="column-title"><strong>${esc(pipelineStageLabels[stage])}</strong><span>${items.length} item(s)</span></div>
+          <div class="column-summary">${fmtMoney(total)}${overdueCount ? ` • ${overdueCount} vencida(s)` : ''}</div>
+        </header>
         <div class="pipeline-list" data-stage="${stage}">
-          ${items.map(c => `<article class="pipeline-card clickable" draggable="true" data-company-detail="${c.id}" data-pipeline-stage="${stage}">
-            <div class="pipeline-card-head"><strong>${esc(c.name)}</strong>${statusBadge(c.status)}</div>
-            <div class="muted small">${esc(c.industry || c.source || 'Sem contexto')}</div>
-            <div class="pipeline-meta"><span>${fmtDateOnly(c.expectedCloseDate || c.nextActionAt)}</span></div>
-            <div class="muted small">Responsável: ${esc(c.ownerName || '-')}</div>
-            <div class="split-actions">
-              ${has('client_companies.update') ? `<button class="btn" data-move-prospect="${c.id}" data-stage="${previousPipelineStage(stage)}" ${previousPipelineStage(stage) ? '' : 'disabled'}>←</button><button class="btn" data-move-prospect="${c.id}" data-stage="${nextPipelineStage(stage)}" ${nextPipelineStage(stage) ? '' : 'disabled'}>→</button>` : ''}
-              ${has('client_interactions.create') ? `<button class="btn primary" data-new-prospect-interaction="${c.id}">Relacionar</button>` : ''}
-            </div>
-          </article>`).join('') || '<div class="empty mini">Sem empresas nesta etapa.</div>'}
+          ${items.map(c => {
+            const dueDate = fmtDateOnly(c.expectedCloseDate || c.nextActionAt);
+            const overdueClass = c.expectedCloseDate && new Date(c.expectedCloseDate) < new Date() ? 'overdue' : '';
+            return `<article class="pipeline-card clickable ${overdueClass}" draggable="${has('client_companies.update') ? 'true' : 'false'}" data-company-detail="${c.id}" data-pipeline-stage="${stage}">
+              <div class="pipeline-card-head"><strong>${esc(c.name)}</strong>${pipelineBadge(c.pipelineStage)}</div>
+              <div class="muted small">${esc(c.industry || c.source || 'Sem contexto')}</div>
+              <div class="pipeline-meta"><span>${dueDate}</span><span>${fmtMoney(c.expectedValue)}</span></div>
+              <div class="muted small">Responsável: ${esc(c.ownerName || '-')}</div>
+              <div class="split-actions">
+                ${has('client_companies.update') ? `<button class="btn" data-move-prospect="${c.id}" data-stage="${previousPipelineStage(stage)}" ${previousPipelineStage(stage) ? '' : 'disabled'}>←</button><button class="btn" data-move-prospect="${c.id}" data-stage="${nextPipelineStage(stage)}" ${nextPipelineStage(stage) ? '' : 'disabled'}>→</button>` : ''}
+                ${has('client_interactions.create') ? `<button class="btn primary" data-new-prospect-interaction="${c.id}">Relacionar</button>` : ''}
+              </div>
+            </article>`;
+          }).join('') || '<div class="empty mini">Sem empresas nesta etapa.</div>'}
         </div>
       </section>`;
     }).join('')}
@@ -994,7 +1059,10 @@ function bindProspectEvents() {
 }
 
 function bindProspectRowActions() {
-  $all('[data-company-detail]').forEach(row => row.addEventListener('click', () => openCompanyDetail(row.dataset.companyDetail)));
+  $all('[data-company-detail]').forEach(row => row.addEventListener('click', () => {
+    if (state.draggingProspect) return;
+    openCompanyDetail(row.dataset.companyDetail);
+  }));
   $all('[data-new-prospect-contact]').forEach(btn => btn.addEventListener('click', event => {
     event.stopPropagation();
     openContactModal({ companyId: btn.dataset.newProspectContact });
@@ -1018,38 +1086,58 @@ function bindProspectRowActions() {
 }
 
 function bindProspectDragAndDrop() {
+  if (!has('client_companies.update')) return;
   const cards = $all('[data-company-detail][draggable="true"]');
   const lists = $all('.pipeline-list');
-
   cards.forEach(card => {
     card.addEventListener('dragstart', e => {
       e.dataTransfer.effectAllowed = 'move';
       e.dataTransfer.setData('companyId', card.dataset.companyDetail);
+      e.dataTransfer.setData('text/plain', card.dataset.companyDetail);
+      state.draggingProspect = card.dataset.companyDetail;
       card.classList.add('dragging');
     });
     card.addEventListener('dragend', () => {
       card.classList.remove('dragging');
-      $all('.pipeline-list').forEach(list => list.classList.remove('drag-over'));
+      setTimeout(() => { state.draggingProspect = null; }, 0);
+      $all('.pipeline-list').forEach(list => list.classList.remove('drag-over', 'placeholder'));
     });
   });
 
   lists.forEach(list => {
+    list.addEventListener('dragenter', e => {
+      e.preventDefault();
+      list.classList.add('drag-over');
+      list.classList.add('placeholder');
+    });
     list.addEventListener('dragover', e => {
       e.preventDefault();
       e.dataTransfer.dropEffect = 'move';
       list.classList.add('drag-over');
     });
     list.addEventListener('dragleave', e => {
-      if (e.target === list) list.classList.remove('drag-over');
+      if (e.target === list) {
+        list.classList.remove('drag-over');
+        list.classList.remove('placeholder');
+      }
     });
     list.addEventListener('drop', async e => {
       e.preventDefault();
       list.classList.remove('drag-over');
-      const companyId = e.dataTransfer.getData('companyId');
+      list.classList.remove('placeholder');
+      const companyId = e.dataTransfer.getData('companyId') || e.dataTransfer.getData('text/plain');
       const newStage = list.dataset.stage;
       if (!companyId || !newStage) return;
+      const currentCard = $(`[data-company-detail="${companyId}"][draggable="true"]`);
+      if (currentCard?.dataset.pipelineStage === newStage) return;
       try {
         await api(`/api/client-companies/${companyId}`, { method: 'PUT', body: JSON.stringify({ pipelineStage: newStage }) });
+        // visual flash to signal success
+        const flash = document.createElement('div');
+        flash.className = 'drop-flash';
+        list.style.position = 'relative';
+        list.appendChild(flash);
+        setTimeout(() => flash.remove(), 900);
         setAlert('Prospecção movida para etapa: ' + (pipelineStageLabels[newStage] || newStage));
         await render();
       } catch (error) {
@@ -1087,6 +1175,105 @@ function companiesTable(companies) {
       <td><div class="tag-list">${(c.tags || []).map(t => `<span class="tag">${esc(t)}</span>`).join('')}</div></td>
     </tr>`).join('')}
   </tbody></table></div>`;
+}
+
+function companyDetailSidebar(company, contacts, interactions) {
+  return `
+    <div class="company-detail">
+      <div class="card pad">
+        <div class="detail-title"><div><h2>${esc(company.name)}</h2><div class="muted">${esc(company.industry || 'Sem ramo informado')}</div></div>${statusBadge(company.status)}</div>
+        <div style="height:14px"></div>
+        <p><strong>Origem:</strong> ${esc(company.source || '-')}</p>
+        <p><strong>Funil:</strong> ${pipelineBadge(company.pipelineStage)} • ${fmtMoney(company.expectedValue)}</p>
+        <p><strong>Previsão de fechamento:</strong> ${fmtDateOnly(company.expectedCloseDate)}</p>
+        <p><strong>CNPJ:</strong> ${esc(company.cnpj || '-')}</p>
+        <p><strong>Local:</strong> ${esc([company.city, company.state].filter(Boolean).join(' / ') || '-')}</p>
+        <p><strong>Responsável:</strong> ${esc(company.ownerName || '-')}</p>
+        <div class="detail-grid">${customFieldsDetailHtml('client_company', company)}</div>
+        <p><strong>Observações:</strong><br /><span class="muted">${esc(company.notes || '-')}</span></p>
+        <div class="tag-list">${(company.tags || []).map(t => `<span class="tag">${esc(t)}</span>`).join('')}</div>
+        <div style="height:16px"></div>
+        <div class="split-actions">
+          ${canEditCompany() ? `<button class="btn" type="button" id="editCompanyFromDetail">Editar</button>` : '<span class="badge">Somente leitura</span>'}
+          <button class="btn ghost" type="button" id="closeCompanyDetail">Fechar</button>
+          ${has('client_contacts.create') ? `<button class="btn primary" type="button" id="newContactFromDetail">Novo contato</button>` : ''}
+          ${has('tasks.create') ? `<button class="btn" type="button" id="newTaskFromCompanyDetail">Nova tarefa</button>` : ''}
+        </div>
+      </div>
+      <div class="card pad"><h2>Contatos vinculados</h2><div style="height:12px"></div>${contacts.length ? contacts.map(c => `<div style="padding:10px 0;border-bottom:1px solid var(--border)"><strong>${esc(c.name)}</strong><div class="muted small">${esc(c.position || '-')} • ${esc(c.email || c.phone || c.whatsapp || '-')}</div></div>`).join('') : '<div class="empty">Nenhum contato.</div>'}</div>
+      <div class="card pad"><h2>Linha de relacionamento</h2><div style="height:12px"></div><div class="timeline">${interactions.length ? interactions.slice(0, 6).map(i => `<div class="timeline-item"><strong>${esc(i.subject)}</strong><div class="muted small">${esc(channelLabels[i.channel] || i.channel)} • ${fmtDate(i.createdAt)} • ${esc(i.contactName || 'Sem contato')}</div><p>${esc(i.description)}</p></div>`).join('') : '<div class="empty">Nenhuma interação.</div>'}</div></div>
+    </div>`;
+}
+
+async function showCompanyDetailPanel(companyId) {
+  const [company, contacts, interactions] = await Promise.all([
+    api(`/api/client-companies/${companyId}`),
+    api(`/api/client-contacts?companyId=${companyId}`),
+    api(`/api/client-interactions?companyId=${companyId}`)
+  ]);
+  const panel = $('#companyDetailPanel');
+  if (!panel) return showCompanyDetailModal(companyId);
+  panel.innerHTML = companyDetailSidebar(company, contacts, interactions);
+  bindCompanyDetailPanelEvents(company);
+}
+
+function bindCompanyDetailPanelEvents(company) {
+  $('#editCompanyFromDetail')?.addEventListener('click', () => openCompanyModal(company));
+  $('#closeCompanyDetail')?.addEventListener('click', () => {
+    const panel = $('#companyDetailPanel');
+    if (panel) panel.innerHTML = '';
+  });
+  $('#newContactFromDetail')?.addEventListener('click', () => openContactModal({ companyId: company.id }));
+  $('#newTaskFromCompanyDetail')?.addEventListener('click', () => openTaskModal({ companyId: company.id }));
+}
+
+async function showCompanyDetailModal(companyId) {
+  const [company, contacts, interactions] = await Promise.all([
+    api(`/api/client-companies/${companyId}`),
+    api(`/api/client-contacts?companyId=${companyId}`),
+    api(`/api/client-interactions?companyId=${companyId}`)
+  ]);
+  modal({
+    title: company.name,
+    submitText: 'Fechar',
+    size: 'wide',
+    body: `
+      <div class="company-detail">
+        <div class="card pad">
+          <div class="detail-title"><div><h2>${esc(company.name)}</h2><div class="muted">${esc(company.industry || 'Sem ramo informado')}</div></div>${statusBadge(company.status)}</div>
+          <div style="height:14px"></div>
+          <p><strong>Origem:</strong> ${esc(company.source || '-')}</p>
+          <p><strong>Funil:</strong> ${pipelineBadge(company.pipelineStage)} • ${fmtMoney(company.expectedValue)}</p>
+          <p><strong>Previsão de fechamento:</strong> ${fmtDateOnly(company.expectedCloseDate)}</p>
+          <p><strong>CNPJ:</strong> ${esc(company.cnpj || '-')}</p>
+          <p><strong>Local:</strong> ${esc([company.city, company.state].filter(Boolean).join(' / ') || '-')}</p>
+          <p><strong>Responsável:</strong> ${esc(company.ownerName || '-')}</p>
+          <div class="detail-grid">${customFieldsDetailHtml('client_company', company)}</div>
+          <p><strong>Observações:</strong><br /><span class="muted">${esc(company.notes || '-')}</span></p>
+          <div class="tag-list">${(company.tags || []).map(t => `<span class="tag">${esc(t)}</span>`).join('')}</div>
+          <div style="height:16px"></div>
+          <div class="split-actions">
+            ${canEditCompany() ? `<button class="btn" type="button" id="editCompanyFromDetail">Editar empresa</button>` : '<span class="badge">Somente leitura</span>'}
+            ${has('client_contacts.create') ? `<button class="btn primary" type="button" id="newContactFromDetail">Novo contato</button>` : ''}
+            ${has('tasks.create') ? `<button class="btn" type="button" id="newTaskFromCompanyDetail">Nova tarefa</button>` : ''}
+          </div>
+        </div>
+        <div class="grid">
+          <div class="card pad"><h2>Contatos vinculados</h2><div style="height:12px"></div>${contacts.length ? contacts.map(c => `<div style="padding:10px 0;border-bottom:1px solid var(--border)"><strong>${esc(c.name)}</strong><div class="muted small">${esc(c.position || '-')} • ${esc(c.email || c.phone || c.whatsapp || '-')}</div></div>`).join('') : '<div class="empty">Nenhum contato.</div>'}</div>
+          <div class="card pad"><h2>Linha de relacionamento</h2><div style="height:12px"></div><div class="timeline">${interactions.length ? interactions.slice(0, 6).map(i => `<div class="timeline-item"><strong>${esc(i.subject)}</strong><div class="muted small">${esc(channelLabels[i.channel] || i.channel)} • ${fmtDate(i.createdAt)} • ${esc(i.contactName || 'Sem contato')}</div><p>${esc(i.description)}</p></div>`).join('') : '<div class="empty">Nenhuma interação.</div>'}</div></div>
+        </div>
+      </div>`,
+    onSubmit: async () => {}
+  });
+  setTimeout(() => {
+    $('#editCompanyFromDetail')?.addEventListener('click', () => { $('.modal-backdrop')?.remove(); openCompanyModal(company); });
+    $('#newContactFromDetail')?.addEventListener('click', () => { $('.modal-backdrop')?.remove(); openContactModal({ companyId: company.id }); });
+    $('#newTaskFromCompanyDetail')?.addEventListener('click', () => { $('.modal-backdrop')?.remove(); openTaskModal({ companyId: company.id }); });
+  });
+}
+
+async function openCompanyDetail(companyId) {
+  return showCompanyDetailModal(companyId);
 }
 
 function bindCompanyEvents() {
@@ -1166,54 +1353,6 @@ function openCompanyModal(company = null) {
 }
 
 
-async function openCompanyDetail(companyId) {
-  const [company, contacts, interactions] = await Promise.all([
-    api(`/api/client-companies/${companyId}`),
-    api(`/api/client-contacts?companyId=${companyId}`),
-    api(`/api/client-interactions?companyId=${companyId}`)
-  ]);
-  modal({
-    title: company.name,
-    submitText: 'Fechar',
-    body: `
-      <div class="company-detail">
-        <div class="card pad">
-          <div class="detail-title"><div><h2>${esc(company.name)}</h2><div class="muted">${esc(company.industry || 'Sem ramo informado')}</div></div>${statusBadge(company.status)}</div>
-          <div style="height:14px"></div>
-          <p><strong>Origem:</strong> ${esc(company.source || '-')}</p>
-          <p><strong>Funil:</strong> ${pipelineBadge(company.pipelineStage)} • ${fmtMoney(company.expectedValue)}</p>
-          <p><strong>Previsão de fechamento:</strong> ${fmtDateOnly(company.expectedCloseDate)}</p>
-          <p><strong>CNPJ:</strong> ${esc(company.cnpj || '-')}</p>
-          <p><strong>Local:</strong> ${esc([company.city, company.state].filter(Boolean).join(' / ') || '-')}</p>
-          <p><strong>Responsável:</strong> ${esc(company.ownerName || '-')}</p>
-          <div class="detail-grid">${customFieldsDetailHtml('client_company', company)}</div>
-          <p><strong>Observações:</strong><br /><span class="muted">${esc(company.notes || '-')}</span></p>
-          <div class="tag-list">${(company.tags || []).map(t => `<span class="tag">${esc(t)}</span>`).join('')}</div>
-          <div style="height:16px"></div>
-          <div class="split-actions">
-            ${canEditCompany() ? `<button class="btn" type="button" id="editCompanyFromDetail">Editar empresa</button>` : '<span class="badge">Somente leitura</span>'}
-            ${has('client_contacts.create') ? `<button class="btn primary" type="button" id="newContactFromDetail">Novo contato</button>` : ''}
-            ${has('tasks.create') ? `<button class="btn" type="button" id="newTaskFromCompanyDetail">Nova tarefa</button>` : ''}
-          </div>
-        </div>
-        <div class="grid">
-          <div class="card pad"><h2>Contatos vinculados</h2><div style="height:12px"></div>${contacts.length ? contacts.map(c => `<div style="padding:10px 0;border-bottom:1px solid var(--border)"><strong>${esc(c.name)}</strong><div class="muted small">${esc(c.position || '-')} • ${esc(c.email || c.phone || c.whatsapp || '-')}</div>${c.email && has('client_interactions.create') ? `<div style="height:8px"></div><button class="btn" type="button" data-email-contact="${c.id}">Enviar e-mail</button>` : ''}</div>`).join('') : '<div class="empty">Nenhum contato.</div>'}</div>
-          <div class="card pad"><h2>Linha de relacionamento</h2><div style="height:12px"></div><div class="timeline">${interactions.length ? interactions.slice(0, 6).map(i => `<div class="timeline-item"><strong>${esc(i.subject)}</strong><div class="muted small">${esc(channelLabels[i.channel] || i.channel)} • ${fmtDate(i.createdAt)} • ${esc(i.contactName || 'Sem contato')}</div><p>${esc(i.description)}</p></div>`).join('') : '<div class="empty">Nenhuma interação.</div>'}</div></div>
-        </div>
-      </div>`,
-    onSubmit: async () => {}
-  });
-  setTimeout(() => {
-    $('#editCompanyFromDetail')?.addEventListener('click', () => { $('.modal-backdrop')?.remove(); openCompanyModal(company); });
-    $('#newContactFromDetail')?.addEventListener('click', () => { $('.modal-backdrop')?.remove(); openContactModal({ companyId: company.id }); });
-    $('#newTaskFromCompanyDetail')?.addEventListener('click', () => { $('.modal-backdrop')?.remove(); openTaskModal({ companyId: company.id }); });
-    $all('[data-email-contact]').forEach(btn => btn.addEventListener('click', () => {
-      const contact = contacts.find(c => c.id === btn.dataset.emailContact);
-      openEmailModal({ company, contact });
-    }));
-  });
-}
-
 async function viewContacts() {
   await ensureCustomFields();
   const [contacts, companies] = await Promise.all([api('/api/client-contacts'), api('/api/client-companies')]);
@@ -1238,7 +1377,7 @@ function contactsTable(contacts) {
       ${customTableCells('client_contact', c)}
       <td>${fmtDateOnly(c.lastInteractionAt)}</td>
       <td>${statusBadge(c.status)}</td>
-      <td><div class="split-actions">${has('client_contacts.update') ? `<button class="btn" data-edit-contact="${c.id}">Editar</button>` : ''}${c.email && has('client_interactions.create') ? `<button class="btn" data-email-contact="${c.id}">E-mail</button>` : ''}${has('client_interactions.create') ? `<button class="btn primary" data-new-interaction-contact="${c.id}">Relacionar</button>` : ''}</div></td>
+      <td><div class="split-actions">${has('client_contacts.update') ? `<button class="btn" data-edit-contact="${c.id}">Editar</button>` : ''}${has('client_interactions.create') ? `<button class="btn primary" data-new-interaction-contact="${c.id}">Relacionar</button>` : ''}</div></td>
     </tr>`).join('')}
   </tbody></table></div>`;
 }
@@ -1251,17 +1390,17 @@ function bindContactEvents() {
 }
 function bindContactRowActions() {
   $all('[data-contact-detail]').forEach(row => row.addEventListener('click', () => openContactDetail(row.dataset.contactDetail)));
-  $all('[data-edit-contact]').forEach(btn => btn.addEventListener('click', () => openContactModal(state.cache.contacts.find(c => c.id === btn.dataset.editContact))));
+  $all('[data-edit-contact]').forEach(btn => btn.addEventListener('click', event => {
+    event.stopPropagation();
+    openContactModal(state.cache.contacts.find(c => c.id === btn.dataset.editContact));
+  }));
   $all('[data-new-interaction-contact]').forEach(btn => {
     const contact = state.cache.contacts.find(c => c.id === btn.dataset.newInteractionContact);
-    btn.addEventListener('click', () => openInteractionModal({ companyId: contact.companyId, contactId: contact.id }));
+    btn.addEventListener('click', event => {
+      event.stopPropagation();
+      openInteractionModal({ companyId: contact.companyId, contactId: contact.id });
+    });
   });
-  $all('[data-email-contact]').forEach(btn => {
-    const contact = state.cache.contacts.find(c => c.id === btn.dataset.emailContact);
-    const company = state.cache.companies.find(c => c.id === contact?.companyId);
-    btn.addEventListener('click', () => openEmailModal({ company, contact }));
-  });
-  $all('[data-edit-contact], [data-new-interaction-contact], [data-email-contact]').forEach(btn => btn.addEventListener('click', event => event.stopPropagation()));
 }
 function filterContacts() {
   const q = $('#contactSearch').value.toLowerCase();
@@ -1342,7 +1481,6 @@ async function openContactDetail(contactId) {
         </div>
         <div class="split-actions">
           ${has('client_contacts.update') ? `<button class="btn" type="button" id="editContactFromDetail">Editar contato</button>` : ''}
-          ${contact.email && has('client_interactions.create') ? `<button class="btn" type="button" id="emailContactFromDetail">Enviar e-mail</button>` : ''}
           ${has('client_interactions.create') ? `<button class="btn primary" type="button" id="newInteractionFromContactDetail">Novo relacionamento</button>` : ''}
         </div>
         <div class="detail-panel">
@@ -1354,7 +1492,6 @@ async function openContactDetail(contactId) {
   });
   setTimeout(() => {
     $('#editContactFromDetail')?.addEventListener('click', () => { $('.modal-backdrop')?.remove(); openContactModal(contact); });
-    $('#emailContactFromDetail')?.addEventListener('click', () => openEmailModal({ company: state.cache.companies?.find(c => c.id === contact.companyId), contact }));
     $('#newInteractionFromContactDetail')?.addEventListener('click', () => { $('.modal-backdrop')?.remove(); openInteractionModal({ companyId: contact.companyId, contactId: contact.id }); });
   });
 }
@@ -1582,25 +1719,34 @@ function tasksKanban(tasks) {
   return `<div class="tasks-board">
     ${statuses.map(status => {
       const items = tasks.filter(t => (t.status || 'open') === status);
+      const count = items.length;
+      const overdue = items.filter(t => t.status !== 'done' && t.dueAt && new Date(t.dueAt) < new Date()).length;
       return `<section class="task-column">
-        <header><strong>${esc(taskStatusLabels[status])}</strong><span>${items.length}</span></header>
+        <header>
+          <div class="column-title"><strong>${esc(taskStatusLabels[status])}</strong><span>${count}</span></div>
+          <div class="column-summary">${overdue ? `${overdue} atrasada(s)` : 'Em dia'}</div>
+        </header>
         <div class="task-list" data-status="${status}">
-          ${items.map(t => `<article class="task-card" draggable="true" data-task-id="${t.id}" data-task-status="${t.status || 'open'}">
-            <div class="task-card-header">
-              <strong>${esc(t.title)}</strong>
-              ${priorityBadge(t.priority)}
-            </div>
-            <div class="muted small">${esc(t.description || t.companyName || '-')}</div>
-            <div class="task-meta">
-              <span>${esc(t.companyName || '-')}</span>
-              <span>${fmtDateOnly(t.dueAt)}</span>
-            </div>
-            <div class="task-assignee">${esc(t.assignedUserName || 'Não atribuído')}</div>
-            <div class="split-actions" style="margin-top:8px;">
-              ${has('tasks.update') ? `<button class="btn" data-edit-task="${t.id}">Editar</button>` : ''}
-              ${has('tasks.delete') ? `<button class="btn danger" data-delete-task="${t.id}">Remover</button>` : ''}
-            </div>
-          </article>`).join('') || '<div class="empty mini">Sem tarefas neste status.</div>'}
+          ${items.map(t => {
+            const dueDate = fmtDateOnly(t.dueAt);
+            const overdueClass = (t.status !== 'done' && t.dueAt && new Date(t.dueAt) < new Date()) ? 'overdue' : '';
+            return `<article class="task-card ${overdueClass}" draggable="true" data-task-id="${t.id}" data-task-status="${t.status || 'open'}">
+              <div class="task-card-header">
+                <strong>${esc(t.title)}</strong>
+                ${priorityBadge(t.priority)}
+              </div>
+              <div class="muted small">${esc(t.description || t.companyName || '-')}</div>
+              <div class="task-meta">
+                <span>${esc(t.companyName || '-')}</span>
+                <span>${dueDate}</span>
+              </div>
+              <div class="task-assignee">${esc(t.assignedUserName || 'Não atribuído')}</div>
+              <div class="split-actions" style="margin-top:8px;">
+                ${has('tasks.update') ? `<button class="btn" data-edit-task="${t.id}">Editar</button>` : ''}
+                ${has('tasks.delete') ? `<button class="btn danger" data-delete-task="${t.id}">Remover</button>` : ''}
+              </div>
+            </article>`;
+          }).join('') || '<div class="empty mini">Sem tarefas neste status.</div>'}
         </div>
       </section>`;
     }).join('')}
@@ -1724,7 +1870,7 @@ async function viewUsers() {
   setTimeout(bindUsersEvents);
   const actions = has('users.create') ? `<button class="btn primary" id="newUser">+ Novo usuário</button>` : '';
   return `${pageHeader('Usuários e Acessos', 'Colaboradores da empresa e perfis de permissão.', '🛡', actions)}
-    <div class="card pad"><p class="muted">As permissões são aplicadas no frontend para esconder abas e no backend para bloquear rotas REST. Operadores, por exemplo, não visualizam administração de usuários.</p></div>
+  
     <div style="height:18px"></div>
     ${usersTable(users, false)}`;
 }

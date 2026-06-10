@@ -7,11 +7,13 @@ const { ensureDatabaseReady } = require('./src/services/database-init.service');
 
 function printDatabaseHelp(error) {
   console.error('Falha ao iniciar banco de dados:', error.message);
+  console.error(error.stack || error);
   console.error('');
   console.error('O sistema precisa de um PostgreSQL ativo.');
   console.error('Caminhos possiveis:');
   console.error('1) Docker instalado: docker compose up -d');
   console.error('2) Sem permissao para Docker: use PostgreSQL em nuvem, como Neon ou Supabase, e cole a connection string no arquivo .env.');
+  console.error('   Verifique também se o host está acessível pela sua rede e se usuário/senha estão corretos.');
   console.error('');
   console.error('Exemplo de .env sem Docker:');
   console.error('DATABASE_URL=postgresql://usuario:senha@host-do-banco/neondb?sslmode=require');

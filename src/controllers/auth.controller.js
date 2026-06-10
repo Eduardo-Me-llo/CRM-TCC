@@ -3,8 +3,10 @@ const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
 const { query } = require('../config/database');
 const { JWT_SECRET } = require('../config/env');
-const { ROLE_LABELS, rolePermissions } = require('../constants/roles');
+const { ROLES, ROLE_LABELS, rolePermissions } = require('../constants/roles');
+const { createAuditLog } = require('../services/audit.service');
 const userModel = require('../models/user.model');
+const developerModel = require('../models/developer.model');
 const systemSettingsModel = require('../models/system-settings.model');
 const { isSimulatedEmail, sendEmail } = require('../services/email.service');
 const { normalizeEmail } = require('../utils/normalizers');
@@ -109,7 +111,59 @@ async function verifyLogin(req, res) {
   res.json(buildAuthResponse(user));
 }
 
+async function register(req, res) {
+  const tenantName = String(req.body.tenantName || '').trim();
+  const tenantDomain = String(req.body.tenantDomain || '').trim().toLowerCase().replace(/^@/, '');
+  const adminName = String(req.body.adminName || '').trim();
+  const adminEmail = normalizeEmail(req.body.adminEmail || '');
+  const adminPassword = String(req.body.adminPassword || '');
+
+  if (!tenantName || !tenantDomain || !adminName || !adminEmail || !adminPassword) {
+    return res.status(400).json({ message: 'Todos os campos são obrigatórios.' });
+  }
+  if (adminPassword.length < 6) {
+    return res.status(400).json({ message: 'A senha precisa ter pelo menos 6 caracteres.' });
+  }
+
+  const existingTenant = await query(`SELECT id FROM tenants WHERE lower(domain) = $1`, [tenantDomain]);
+  if (existingTenant.rows.length) {
+    return res.status(400).json({ message: 'Este domínio já está em uso.' });
+  }
+
+  const existingUser = await userModel.findLoginUser(adminEmail);
+  if (existingUser) {
+    return res.status(400).json({ message: 'Este e-mail já está cadastrado.' });
+  }
+
+  try {
+    const tenant = await developerModel.createTenant({ name: tenantName, domain: tenantDomain });
+    const passwordHash = await bcrypt.hash(adminPassword, 10);
+    await developerModel.createUser({ tenantId: tenant.id, name: adminName, email: adminEmail, passwordHash, role: ROLES.ADMIN_MASTER, status: 'active' });
+    const user = await userModel.findLoginUser(adminEmail);
+
+    await createAuditLog({
+      userId: user.id,
+      tenantId: tenant.id,
+      action: 'auth.registered',
+      entityType: 'tenant',
+      entityId: tenant.id,
+      metadata: { tenantName, tenantDomain, adminEmail }
+    });
+
+    res.status(201).json(buildAuthResponse(user));
+  } catch (error) {
+    if (error.code === '23505') {
+      const message = error.detail?.includes('users_email_key')
+        ? 'Este e-mail já está em uso.'
+        : 'Este domínio já está em uso.';
+      return res.status(400).json({ message });
+    }
+    throw error;
+  }
+}
+
 module.exports = {
   login,
+  register,
   verifyLogin
 };
