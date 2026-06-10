@@ -25,7 +25,7 @@ if (require.main === module) {
   ensureDatabaseReady()
     .then(() => {
       app.listen(PORT, () => {
-        console.log(`CRM SaaS v6 rodando em http://localhost:${PORT}`);
+        console.log(`CRM rodando em http://localhost:${PORT}`);
         console.log(`Banco: ${maskDatabaseUrl(DATABASE_URL)}`);
       });
     })
