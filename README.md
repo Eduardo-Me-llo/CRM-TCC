@@ -1,4 +1,4 @@
-# CRM SaaS v6 — Primeira grande entrega
+# CRM
 
 Esta versão substitui o MVP anterior por uma base mais profissional e vendável, com **PostgreSQL**, **login multiempresa**, **painel do desenvolvedor**, **empresas contratantes**, **usuários por empresa**, **clientes B2B separados em Empresas, Contatos e Relacionamentos** e **permissões reais no backend**.
 
@@ -25,7 +25,6 @@ Esta versão substitui o MVP anterior por uma base mais profissional e vendável
 ## Tecnologias
 
 - Node.js
-- Express
 - PostgreSQL
 - JWT
 - bcryptjs
@@ -243,7 +242,7 @@ npm start
 
 ## Observações para produção
 
-Esta versão já é muito mais profunda que o MVP, mas ainda recomendo as próximas etapas antes de vender:
+próximas etapas antes de vender:
 
 - refresh token e rotação de sessão;
 - recuperação de senha por e-mail;
@@ -255,3 +254,5 @@ Esta versão já é muito mais profunda que o MVP, mas ainda recomendo as próxi
 - deploy em nuvem;
 - backup automático;
 - LGPD: exportação, anonimização e exclusão controlada de dados.
+
+
