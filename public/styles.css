@@ -197,18 +197,20 @@ tr:hover td { background: #f8fafc; }
 .kanban-notice { border-radius: 999px; padding: 6px 10px; font-weight: 700; }
 .kanban-notice.success { background: #dcfce7; color: #166534; }
 .kanban-notice.error { background: #fee2e2; color: #991b1b; }
-.pipeline-board { display: grid; grid-template-columns: repeat(6, minmax(250px, 1fr)); gap: 14px; overflow-x: auto; padding-bottom: 10px; }
-.pipeline-column { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); min-height: 420px; display: flex; flex-direction: column; overflow: hidden; }
-.pipeline-column header { padding: 14px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; gap: 10px; align-items: center; }
+.pipeline-board { display: grid; grid-template-columns: repeat(6, minmax(250px, 1fr)); gap: 14px; overflow-x: auto; overflow-y: visible; padding: 4px 6px 14px 2px; scrollbar-gutter: stable; }
+.pipeline-column { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); min-height: 420px; display: flex; flex-direction: column; overflow: visible; min-width: 0; }
+.pipeline-column header { padding: 14px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; gap: 10px; align-items: flex-start; min-width: 0; }
 .pipeline-column header span { color: var(--muted); font-size: 13px; font-weight: 800; white-space: nowrap; }
-.pipeline-list { position: relative; padding: 12px; display: grid; gap: 10px; align-content: start; min-height: 320px; flex: 1; border: 2px dashed transparent; border-radius: 0 0 var(--radius) var(--radius); transition: background .15s ease, border-color .15s ease; }
-.pipeline-card { border: 1px solid var(--border); border-radius: 12px; background: #fff; padding: 14px; display: grid; gap: 10px; box-shadow: 0 2px 12px rgba(15,23,42,.06); cursor: grab; }
+.pipeline-list { position: relative; padding: 12px; display: grid; gap: 10px; align-content: start; min-height: 320px; flex: 1; border: 2px dashed transparent; border-radius: 0 0 var(--radius) var(--radius); transition: background .15s ease, border-color .15s ease; min-width: 0; }
+.pipeline-card { border: 1px solid var(--border); border-radius: 12px; background: #fff; padding: 14px; display: grid; gap: 10px; box-shadow: 0 2px 12px rgba(15,23,42,.06); cursor: grab; min-width: 0; max-width: 100%; overflow-wrap: anywhere; }
 .pipeline-card.overdue { border-color: #f87171; background: #fff5f5; }
 .pipeline-card:hover { border-color: #7dd3fc; box-shadow: 0 12px 26px rgba(15,23,42,.10); transform: translateY(-4px); transition: transform .12s ease, box-shadow .12s ease, border-color .12s ease; }
 .pipeline-card.dragging { opacity: .45; transform: scale(.98); }
 .pipeline-card:active { cursor: grabbing; }
-.pipeline-card-head { display: flex; justify-content: space-between; gap: 10px; align-items: flex-start; }
-.pipeline-card-status { display: flex; align-items: center; gap: 6px; }
+.pipeline-card-head { display: flex; justify-content: space-between; gap: 10px; align-items: flex-start; min-width: 0; }
+.pipeline-card-head strong { min-width: 0; line-height: 1.25; overflow-wrap: anywhere; word-break: break-word; }
+.pipeline-card-status { display: flex; align-items: center; justify-content: flex-end; gap: 6px; flex: 0 0 auto; max-width: 46%; flex-wrap: wrap; }
+.pipeline-card-status .badge { max-width: 100%; white-space: normal; text-align: center; justify-content: center; }
 .pipeline-drag-handle { border: 0; border-radius: 8px; background: #f1f5f9; color: var(--muted); width: 30px; height: 30px; padding: 0; display: grid; place-items: center; font-weight: 900; line-height: 1; cursor: grab; touch-action: none; }
 .pipeline-drag-handle:hover { background: #e2e8f0; color: var(--text); }
 .pipeline-drag-handle:active { cursor: grabbing; }
@@ -218,8 +220,11 @@ tr:hover td { background: #f8fafc; }
 .pipeline-list .drop-flash { position: absolute; inset: 0; border-radius: 12px; background: linear-gradient(90deg, rgba(59,130,246,.06), rgba(16,185,129,.05)); pointer-events: none; animation: dropFlash .9s ease; }
 
 @keyframes dropFlash { 0% { opacity: 0 } 20% { opacity: 1 } 100% { opacity: 0 } }
-.pipeline-column header { padding: 14px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; gap: 10px; align-items: center; }
-.pipeline-meta { display: flex; justify-content: space-between; gap: 10px; color: var(--muted); font-size: 13px; font-weight: 800; }
+.pipeline-column header { padding: 14px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; gap: 10px; align-items: flex-start; }
+.pipeline-meta { display: flex; justify-content: space-between; gap: 10px; color: var(--muted); font-size: 13px; font-weight: 800; min-width: 0; flex-wrap: wrap; }
+.pipeline-meta span { min-width: 0; overflow-wrap: anywhere; }
+.pipeline-card .split-actions { width: 100%; display: grid; grid-template-columns: repeat(auto-fit, minmax(56px, 1fr)); gap: 8px; }
+.pipeline-card .btn { min-width: 0; padding-left: 10px; padding-right: 10px; }
 .empty.mini { padding: 18px; font-size: 13px; }
 .tasks-board { display: grid; grid-template-columns: repeat(4, minmax(240px, 1fr)); gap: 14px; overflow-x: auto; padding-bottom: 8px; }
 .task-column { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); min-height: 360px; display: flex; flex-direction: column; }
@@ -284,7 +289,7 @@ tr:hover td { background: #f8fafc; }
   .sidebar-collapsed .nav-btn { justify-content: flex-start; padding: 12px 14px; font-size: inherit; }
   .sidebar-collapsed .nav-btn .nav-icon { width: 22px; font-size: inherit; }
   .grid-4, .grid-3, .grid-2, .company-detail, .detail-grid, .company-page-grid, .prospect-summary { grid-template-columns: 1fr; }
-  .pipeline-board { grid-template-columns: repeat(6, minmax(260px, 82vw)); }
+  .pipeline-board { grid-template-columns: repeat(6, minmax(250px, 78vw)); padding-right: 10px; }
   .kanban-hint { align-items: flex-start; flex-direction: column; }
   .topbar { flex-wrap: wrap; height: auto; padding: 16px; }
   .search-box { min-width: 100%; }
@@ -315,4 +320,6 @@ tr:hover td { background: #f8fafc; }
   .login-card { border-radius: 16px; padding: 22px; }
   .pipeline-card-status .badge { display: none; }
   .pipeline-drag-handle { width: 38px; height: 38px; }
+  .pipeline-card { padding: 12px; }
+  .pipeline-card .split-actions { grid-template-columns: 1fr; }
 }
