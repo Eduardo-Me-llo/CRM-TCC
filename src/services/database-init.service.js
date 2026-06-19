@@ -170,6 +170,7 @@ async function initDatabase() {
     );
 
     CREATE INDEX IF NOT EXISTS idx_users_tenant_id ON users(tenant_id);
+    CREATE INDEX IF NOT EXISTS idx_users_email_lower ON users(lower(email));
     CREATE INDEX IF NOT EXISTS idx_companies_tenant_id ON client_companies(tenant_id);
     CREATE INDEX IF NOT EXISTS idx_contacts_tenant_company ON client_contacts(tenant_id, company_id);
     CREATE INDEX IF NOT EXISTS idx_interactions_tenant_company ON client_interactions(tenant_id, company_id);

@@ -6,7 +6,10 @@ const state = {
   alert: null,
   pendingLogin: JSON.parse(sessionStorage.getItem('crm_pending_login') || 'null'),
   sidebarCollapsed: localStorage.getItem('crm_sidebar_collapsed') === 'true',
-  authMode: 'login'
+  authMode: 'login',
+  draggingProspect: null,
+  prospectMoveInFlight: new Set(),
+  suppressProspectClickUntil: 0
 };
 
 let notificationPollTimer = null;
@@ -148,6 +151,10 @@ function validateCNPJ(cnpj) {
   const sum2 = numbers13.reduce((acc, number, index) => acc + number * weights2[index], 0);
   const d2 = sum2 % 11 < 2 ? 0 : 11 - (sum2 % 11);
   return Number(v[12]) === d1 && Number(v[13]) === d2;
+}
+
+function isUuid(value) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value || '').trim());
 }
 
 function focusFirstInvalid(form, errorMessage = '') {
@@ -631,7 +638,11 @@ function renderLogin() {
   $('#loginForm').addEventListener('submit', async e => {
     e.preventDefault();
     const btn = e.submitter;
+    const originalButtonHtml = btn.innerHTML;
     btn.disabled = true;
+    btn.classList.add('loading');
+    btn.innerHTML = `<span class="spinner" aria-hidden="true"></span>${pending ? 'Validando...' : isRegister ? 'Criando conta...' : 'Entrando...'}`;
+    e.currentTarget.setAttribute('aria-busy', 'true');
     try {
       const values = formValues(e.currentTarget);
       let data;
@@ -671,6 +682,9 @@ function renderLogin() {
       setAlert(error.message, 'error');
       renderLogin();
     } finally {
+      e.currentTarget.removeAttribute('aria-busy');
+      btn.classList.remove('loading');
+      btn.innerHTML = originalButtonHtml;
       btn.disabled = false;
     }
   });
@@ -963,11 +977,15 @@ async function viewProspects() {
     <div class="toolbar">
       <div class="filters">
         <input class="input" style="width:300px" id="prospectSearch" placeholder="Buscar prospecção, origem, ramo..." />
+        <select class="select" style="width:210px" id="prospectStage">
+          <option value="">Todas as etapas</option>
+          ${Object.entries(pipelineStageLabels).map(([key, label]) => `<option value="${key}">${esc(label)}</option>`).join('')}
+        </select>
       </div>
-      <div class="muted small">${prospects.length} empresa(s) em prospecção</div>
+      <div class="muted small" id="prospectCount">${prospects.length} empresa(s) em prospecção</div>
     </div>
-    <div class="prospect-summary">${prospectSummaryCards(prospects)}</div>
-    <div class="kanban-hint"><strong>Funil de prospecção</strong><span>Arraste os cards entre as colunas para atualizar a etapa da oportunidade.</span></div>
+    <div class="prospect-summary" id="prospectSummary">${prospectSummaryCards(prospects)}</div>
+    <div class="kanban-hint"><strong>Funil de prospecção</strong><span id="prospectNotice" role="status" aria-live="polite">Arraste os cards entre as colunas para atualizar a etapa da oportunidade.</span></div>
     <div id="prospectArea">${prospectsBoard(prospects)}</div>`;
 }
 
@@ -1021,8 +1039,11 @@ function prospectsBoard(prospects) {
           ${items.map(c => {
             const dueDate = fmtDateOnly(c.expectedCloseDate || c.nextActionAt);
             const overdueClass = c.expectedCloseDate && new Date(c.expectedCloseDate) < new Date() ? 'overdue' : '';
-            return `<article class="pipeline-card clickable ${overdueClass}" draggable="${has('client_companies.update') ? 'true' : 'false'}" data-company-detail="${c.id}" data-pipeline-stage="${stage}">
-              <div class="pipeline-card-head"><strong>${esc(c.name)}</strong>${pipelineBadge(c.pipelineStage)}</div>
+            return `<article class="pipeline-card clickable ${overdueClass}" draggable="${has('client_companies.update') ? 'true' : 'false'}" data-company-detail="${c.id}" data-pipeline-stage="${stage}" aria-label="${esc(c.name)}, etapa ${esc(pipelineStageLabels[stage])}">
+              <div class="pipeline-card-head">
+                <strong>${esc(c.name)}</strong>
+                <div class="pipeline-card-status">${pipelineBadge(c.pipelineStage)}${has('client_companies.update') ? `<button type="button" class="pipeline-drag-handle" data-prospect-drag-handle aria-label="Arrastar ${esc(c.name)}" title="Arrastar oportunidade">⋮⋮</button>` : ''}</div>
+              </div>
               <div class="muted small">${esc(c.industry || c.source || 'Sem contexto')}</div>
               <div class="pipeline-meta"><span>${dueDate}</span><span>${fmtMoney(c.expectedValue)}</span></div>
               <div class="muted small">Responsável: ${esc(c.ownerName || '-')}</div>
@@ -1054,13 +1075,14 @@ function bindProspectEvents() {
   $all('[data-route]').forEach(btn => btn.addEventListener('click', () => navigate(btn.dataset.route)));
   $('#newProspect')?.addEventListener('click', () => openCompanyModal({ status: 'prospect' }));
   $('#prospectSearch')?.addEventListener('input', filterProspects);
+  $('#prospectStage')?.addEventListener('change', filterProspects);
   bindProspectRowActions();
   bindProspectDragAndDrop();
 }
 
 function bindProspectRowActions() {
-  $all('[data-company-detail]').forEach(row => row.addEventListener('click', () => {
-    if (state.draggingProspect) return;
+  $all('[data-company-detail]').forEach(row => row.addEventListener('click', event => {
+    if (event.target.closest('button') || state.draggingProspect || Date.now() < state.suppressProspectClickUntil) return;
     openCompanyDetail(row.dataset.companyDetail);
   }));
   $all('[data-new-prospect-contact]').forEach(btn => btn.addEventListener('click', event => {
@@ -1074,14 +1096,7 @@ function bindProspectRowActions() {
   $all('[data-move-prospect]').forEach(btn => btn.addEventListener('click', async event => {
     event.stopPropagation();
     if (!btn.dataset.stage) return;
-    try {
-      await api(`/api/client-companies/${btn.dataset.moveProspect}`, { method: 'PUT', body: JSON.stringify({ pipelineStage: btn.dataset.stage }) });
-      setAlert('Etapa do funil atualizada.');
-      await render();
-    } catch (error) {
-      setAlert(error.message, 'error');
-      await render();
-    }
+    await moveProspect(btn.dataset.moveProspect, btn.dataset.stage);
   }));
 }
 
@@ -1092,9 +1107,10 @@ function bindProspectDragAndDrop() {
   cards.forEach(card => {
     card.addEventListener('dragstart', e => {
       e.dataTransfer.effectAllowed = 'move';
-      e.dataTransfer.setData('companyId', card.dataset.companyDetail);
+      e.dataTransfer.setData('application/x-crm-company-id', card.dataset.companyDetail);
       e.dataTransfer.setData('text/plain', card.dataset.companyDetail);
       state.draggingProspect = card.dataset.companyDetail;
+      state.suppressProspectClickUntil = Date.now() + 700;
       card.classList.add('dragging');
     });
     card.addEventListener('dragend', () => {
@@ -1116,7 +1132,7 @@ function bindProspectDragAndDrop() {
       list.classList.add('drag-over');
     });
     list.addEventListener('dragleave', e => {
-      if (e.target === list) {
+      if (!list.contains(e.relatedTarget)) {
         list.classList.remove('drag-over');
         list.classList.remove('placeholder');
       }
@@ -1125,37 +1141,163 @@ function bindProspectDragAndDrop() {
       e.preventDefault();
       list.classList.remove('drag-over');
       list.classList.remove('placeholder');
-      const companyId = e.dataTransfer.getData('companyId') || e.dataTransfer.getData('text/plain');
+      const companyId = state.draggingProspect
+        || e.dataTransfer.getData('application/x-crm-company-id')
+        || e.dataTransfer.getData('text/plain');
       const newStage = list.dataset.stage;
-      if (!companyId || !newStage) return;
+      if (!isUuid(companyId) || !newStage) {
+        showProspectNotice('Não foi possível identificar a empresa movida. Tente novamente.', 'error');
+        return;
+      }
       const currentCard = $(`[data-company-detail="${companyId}"][draggable="true"]`);
       if (currentCard?.dataset.pipelineStage === newStage) return;
-      try {
-        await api(`/api/client-companies/${companyId}`, { method: 'PUT', body: JSON.stringify({ pipelineStage: newStage }) });
-        // visual flash to signal success
-        const flash = document.createElement('div');
-        flash.className = 'drop-flash';
-        list.style.position = 'relative';
-        list.appendChild(flash);
-        setTimeout(() => flash.remove(), 900);
-        setAlert('Prospecção movida para etapa: ' + (pipelineStageLabels[newStage] || newStage));
-        await render();
-      } catch (error) {
-        setAlert(error.message, 'error');
-      }
+      await moveProspect(companyId, newStage);
     });
+  });
+
+  $all('[data-prospect-drag-handle]').forEach(handle => {
+    handle.addEventListener('click', event => event.stopPropagation());
+    handle.addEventListener('pointerdown', event => startProspectPointerDrag(event, handle.closest('.pipeline-card')));
+  });
+}
+
+function filteredProspects() {
+  const q = ($('#prospectSearch')?.value || '').toLowerCase();
+  const stage = $('#prospectStage')?.value || '';
+  return (state.cache.prospects || []).filter(c => {
+    const text = [c.name, c.tradeName, c.cnpj, c.industry, c.source, c.notes, customFieldSearchText(c), (c.tags || []).join(' ')].join(' ').toLowerCase();
+    return (!q || text.includes(q)) && (!stage || (c.pipelineStage || 'new') === stage);
   });
 }
 
 function filterProspects() {
-  const q = $('#prospectSearch').value.toLowerCase();
-  const list = state.cache.prospects.filter(c => {
-    const text = [c.name, c.tradeName, c.cnpj, c.industry, c.source, c.notes, customFieldSearchText(c), (c.tags || []).join(' ')].join(' ').toLowerCase();
-    return !q || text.includes(q);
-  });
+  const list = filteredProspects();
   $('#prospectArea').innerHTML = prospectsBoard(list);
+  if ($('#prospectCount')) $('#prospectCount').textContent = `${list.length} empresa(s) em prospecção`;
   bindProspectRowActions();
   bindProspectDragAndDrop();
+}
+
+async function moveProspect(companyId, newStage) {
+  companyId = String(companyId || '').trim();
+  if (!isUuid(companyId)) {
+    showProspectNotice('ID da empresa inválido. Atualize a página e tente novamente.', 'error');
+    return;
+  }
+  if (!pipelineStageLabels[newStage] || state.prospectMoveInFlight.has(companyId)) return;
+  const prospect = (state.cache.prospects || []).find(item => String(item.id) === String(companyId));
+  if (!prospect || (prospect.pipelineStage || 'new') === newStage) return;
+
+  const previousStage = prospect.pipelineStage || 'new';
+  state.prospectMoveInFlight.add(companyId);
+  prospect.pipelineStage = newStage;
+  refreshProspectView();
+  let moved = false;
+
+  try {
+    const updated = await api(`/api/client-companies/${companyId}`, {
+      method: 'PUT',
+      body: JSON.stringify({ pipelineStage: newStage })
+    });
+    prospect.pipelineStage = updated?.pipelineStage || newStage;
+    const company = (state.cache.companies || []).find(item => String(item.id) === String(companyId));
+    if (company) company.pipelineStage = prospect.pipelineStage;
+    moved = true;
+  } catch (error) {
+    prospect.pipelineStage = previousStage;
+    showProspectNotice(error.message, 'error');
+  } finally {
+    state.prospectMoveInFlight.delete(companyId);
+    state.draggingProspect = null;
+    refreshProspectView();
+    if (moved) {
+      showProspectMoveFeedback(newStage);
+      showProspectNotice('Prospecção movida para etapa: ' + pipelineStageLabels[newStage], 'success');
+    }
+  }
+}
+
+function refreshProspectView() {
+  if (!$('#prospectArea')) return;
+  const list = filteredProspects();
+  $('#prospectArea').innerHTML = prospectsBoard(list);
+  if ($('#prospectSummary')) $('#prospectSummary').innerHTML = prospectSummaryCards(state.cache.prospects || []);
+  if ($('#prospectCount')) $('#prospectCount').textContent = `${list.length} empresa(s) em prospecção`;
+  bindProspectRowActions();
+  bindProspectDragAndDrop();
+}
+
+function showProspectMoveFeedback(stage) {
+  const list = $(`.pipeline-list[data-stage="${stage}"]`);
+  if (!list) return;
+  const flash = document.createElement('div');
+  flash.className = 'drop-flash';
+  list.appendChild(flash);
+  setTimeout(() => flash.remove(), 700);
+}
+
+function showProspectNotice(message, type = 'success') {
+  const notice = $('#prospectNotice');
+  if (!notice) return;
+  notice.textContent = message;
+  notice.className = `kanban-notice ${type}`;
+  clearTimeout(showProspectNotice.timer);
+  showProspectNotice.timer = setTimeout(() => {
+    const currentNotice = $('#prospectNotice');
+    if (!currentNotice) return;
+    currentNotice.textContent = 'Arraste os cards entre as colunas para atualizar a etapa da oportunidade.';
+    currentNotice.className = '';
+  }, 3500);
+}
+
+function startProspectPointerDrag(event, card) {
+  if (!card || event.pointerType === 'mouse' || event.button !== 0) return;
+  event.preventDefault();
+  event.stopPropagation();
+
+  const companyId = card.dataset.companyDetail;
+  const originalStage = card.dataset.pipelineStage;
+  const ghost = card.cloneNode(true);
+  ghost.classList.add('pipeline-card-ghost');
+  ghost.removeAttribute('draggable');
+  document.body.appendChild(ghost);
+
+  state.draggingProspect = companyId;
+  state.suppressProspectClickUntil = Date.now() + 900;
+  card.classList.add('dragging');
+
+  const moveGhost = pointerEvent => {
+    ghost.style.left = `${pointerEvent.clientX + 14}px`;
+    ghost.style.top = `${pointerEvent.clientY + 14}px`;
+    $all('.pipeline-list.drag-over').forEach(list => list.classList.remove('drag-over'));
+    const target = document.elementFromPoint(pointerEvent.clientX, pointerEvent.clientY)?.closest('.pipeline-list');
+    if (target) target.classList.add('drag-over');
+  };
+
+  const cleanup = () => {
+    document.removeEventListener('pointermove', moveGhost);
+    document.removeEventListener('pointerup', finish);
+    document.removeEventListener('pointercancel', cancel);
+    ghost.remove();
+    card.classList.remove('dragging');
+    $all('.pipeline-list.drag-over').forEach(list => list.classList.remove('drag-over'));
+    state.draggingProspect = null;
+  };
+
+  const finish = async pointerEvent => {
+    const target = document.elementFromPoint(pointerEvent.clientX, pointerEvent.clientY)?.closest('.pipeline-list');
+    cleanup();
+    if (target?.dataset.stage && target.dataset.stage !== originalStage) {
+      await moveProspect(companyId, target.dataset.stage);
+    }
+  };
+
+  const cancel = () => cleanup();
+
+  moveGhost(event);
+  document.addEventListener('pointermove', moveGhost, { passive: false });
+  document.addEventListener('pointerup', finish);
+  document.addEventListener('pointercancel', cancel);
 }
 
 function companiesTable(companies) {
@@ -1198,6 +1340,7 @@ function companyDetailSidebar(company, contacts, interactions) {
           <button class="btn ghost" type="button" id="closeCompanyDetail">Fechar</button>
           ${has('client_contacts.create') ? `<button class="btn primary" type="button" id="newContactFromDetail">Novo contato</button>` : ''}
           ${has('tasks.create') ? `<button class="btn" type="button" id="newTaskFromCompanyDetail">Nova tarefa</button>` : ''}
+          ${has('client_companies.delete') ? `<button class="btn danger" type="button" id="deleteCompanyFromDetail">Excluir empresa</button>` : ''}
         </div>
       </div>
       <div class="card pad"><h2>Contatos vinculados</h2><div style="height:12px"></div>${contacts.length ? contacts.map(c => `<div style="padding:10px 0;border-bottom:1px solid var(--border)"><strong>${esc(c.name)}</strong><div class="muted small">${esc(c.position || '-')} • ${esc(c.email || c.phone || c.whatsapp || '-')}</div></div>`).join('') : '<div class="empty">Nenhum contato.</div>'}</div>
@@ -1219,6 +1362,7 @@ async function showCompanyDetailPanel(companyId) {
 
 function bindCompanyDetailPanelEvents(company) {
   $('#editCompanyFromDetail')?.addEventListener('click', () => openCompanyModal(company));
+  $('#deleteCompanyFromDetail')?.addEventListener('click', () => deleteCompanyFromDetail(company));
   $('#closeCompanyDetail')?.addEventListener('click', () => {
     const panel = $('#companyDetailPanel');
     if (panel) panel.innerHTML = '';
@@ -1256,6 +1400,7 @@ async function showCompanyDetailModal(companyId) {
             ${canEditCompany() ? `<button class="btn" type="button" id="editCompanyFromDetail">Editar empresa</button>` : '<span class="badge">Somente leitura</span>'}
             ${has('client_contacts.create') ? `<button class="btn primary" type="button" id="newContactFromDetail">Novo contato</button>` : ''}
             ${has('tasks.create') ? `<button class="btn" type="button" id="newTaskFromCompanyDetail">Nova tarefa</button>` : ''}
+            ${has('client_companies.delete') ? `<button class="btn danger" type="button" id="deleteCompanyFromDetail">Excluir empresa</button>` : ''}
           </div>
         </div>
         <div class="grid">
@@ -1269,11 +1414,45 @@ async function showCompanyDetailModal(companyId) {
     $('#editCompanyFromDetail')?.addEventListener('click', () => { $('.modal-backdrop')?.remove(); openCompanyModal(company); });
     $('#newContactFromDetail')?.addEventListener('click', () => { $('.modal-backdrop')?.remove(); openContactModal({ companyId: company.id }); });
     $('#newTaskFromCompanyDetail')?.addEventListener('click', () => { $('.modal-backdrop')?.remove(); openTaskModal({ companyId: company.id }); });
+    $('#deleteCompanyFromDetail')?.addEventListener('click', () => deleteCompanyFromDetail(company));
   });
 }
 
 async function openCompanyDetail(companyId) {
   return showCompanyDetailModal(companyId);
+}
+
+async function deleteCompanyFromDetail(company) {
+  if (!company?.id || !has('client_companies.delete')) return;
+  const recordLabel = company.status === 'prospect' ? 'prospecção' : 'empresa cliente';
+  const confirmed = confirm(`Excluir a ${recordLabel} "${company.name}"?\n\nEsta ação também remove contatos, relacionamentos, tarefas e registros vinculados a ela.`);
+  if (!confirmed) return;
+
+  const btn = $('#deleteCompanyFromDetail');
+  const originalText = btn?.textContent;
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = 'Excluindo...';
+  }
+
+  try {
+    await api(`/api/client-companies/${company.id}`, { method: 'DELETE' });
+    state.cache.companies = (state.cache.companies || []).filter(item => item.id !== company.id);
+    state.cache.prospects = (state.cache.prospects || []).filter(item => item.id !== company.id);
+    $('.modal-backdrop')?.remove();
+    const panel = $('#companyDetailPanel');
+    if (panel) panel.innerHTML = '';
+    setAlert(company.status === 'prospect' ? 'Prospecção excluída com sucesso.' : 'Empresa cliente excluída com sucesso.');
+    await render();
+  } catch (error) {
+    setAlert(error.message, 'error');
+    await render();
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = originalText || 'Excluir empresa';
+    }
+  }
 }
 
 function bindCompanyEvents() {
@@ -1314,6 +1493,7 @@ function filterCompanies() {
 }
 function openCompanyModal(company = null) {
   const isEdit = Boolean(company?.id);
+  const deleteLabel = company?.status === 'prospect' ? 'Excluir prospecção' : 'Excluir empresa';
   const usersOptions = `<option value="${esc(state.user?.id || '')}" ${!company?.ownerUserId ? 'selected' : ''}>Usuário atual</option>` + (state.cache.users || []).map(u => `<option value="${u.id}" ${company?.ownerUserId === u.id ? 'selected' : ''}>${esc(u.name)} - ${esc(roleLabels[u.role] || u.role)}</option>`).join('');
   modal({
     title: isEdit ? 'Editar empresa cliente' : 'Nova empresa cliente',
@@ -1337,6 +1517,7 @@ function openCompanyModal(company = null) {
         <div class="field full"><label>Motivo de perda</label><input class="input" name="lostReason" value="${esc(company?.lostReason || '')}" placeholder="Preencha se a oportunidade foi perdida" /></div>
         ${customFieldsHtml('client_company', company)}
         <div class="field full"><label>Observações</label><textarea name="notes">${esc(company?.notes || '')}</textarea></div>
+        ${isEdit && has('client_companies.delete') ? `<div class="field full delete-zone"><strong>${esc(deleteLabel)}</strong><span class="muted small">Remove este registro e os dados vinculados a ele.</span><button class="btn danger" type="button" id="deleteCompanyFromEdit">${esc(deleteLabel)}</button></div>` : ''}
       </div>`,
     onSubmit: async values => {
       // Validations: name, ownerUserId, cnpj
@@ -1349,6 +1530,9 @@ function openCompanyModal(company = null) {
       await api(isEdit ? `/api/client-companies/${company.id}` : '/api/client-companies', { method: isEdit ? 'PUT' : 'POST', body: JSON.stringify(values) });
       setAlert(isEdit ? 'Empresa atualizada.' : 'Empresa cliente cadastrada.');
     }
+  });
+  setTimeout(() => {
+    $('#deleteCompanyFromEdit')?.addEventListener('click', () => deleteCompanyFromDetail(company));
   });
 }
 
@@ -1413,14 +1597,15 @@ function filterContacts() {
   bindContactRowActions();
 }
 function openContactModal(contact = null) {
+  const isEdit = Boolean(contact?.id);
   const companies = state.cache.companies || [];
   const selectedCompany = contact?.companyId || contact?.companyId === '' ? contact.companyId : contact?.companyId;
   modal({
-    title: contact?.id ? 'Editar contato' : 'Novo contato',
-    submitText: contact?.id ? 'Salvar alterações' : 'Cadastrar contato',
+    title: isEdit ? 'Editar contato' : 'Novo contato',
+    submitText: isEdit ? 'Salvar alterações' : 'Cadastrar contato',
     body: `
       <div class="form-grid">
-        <div class="field full"><label>Empresa cliente *</label><select class="select" name="companyId" required ${contact?.id ? 'disabled' : ''}><option value="">Selecione</option>${companies.map(c => `<option value="${c.id}" ${contact?.companyId === c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select></div>
+        <div class="field full"><label>Empresa cliente *</label><select class="select" name="companyId" required ${isEdit ? 'disabled' : ''}><option value="">Selecione</option>${companies.map(c => `<option value="${c.id}" ${contact?.companyId === c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select></div>
         <div class="field"><label>Nome *</label><input class="input" name="name" value="${esc(contact?.name || '')}" required /></div>
         <div class="field"><label>Cargo</label><input class="input" name="position" value="${esc(contact?.position || '')}" /></div>
         <div class="field"><label>E-mail</label><input class="input" name="email" type="email" value="${esc(contact?.email || '')}" /></div>
@@ -1430,16 +1615,17 @@ function openContactModal(contact = null) {
         <div class="field"><label>Status</label><select class="select" name="status"><option value="active" ${contact?.status === 'active' ? 'selected' : ''}>Ativo</option><option value="inactive" ${contact?.status === 'inactive' ? 'selected' : ''}>Inativo</option></select></div>
         ${customFieldsHtml('client_contact', contact)}
         <div class="field full"><label>Observações</label><textarea name="notes">${esc(contact?.notes || '')}</textarea></div>
+        ${isEdit && has('client_contacts.delete') ? '<div class="field full delete-zone"><strong>Excluir contato</strong><span class="muted small">Remove este contato. Relacionamentos existentes ficam sem contato vinculado.</span><button class="btn danger" type="button" id="deleteContactFromEdit">Excluir contato</button></div>' : ''}
       </div>`,
     onSubmit: async values => {
       // Validations: companyId, name required; optional email/phone validations
-      if (!values.companyId) throw new Error('Empresa cliente é obrigatória.');
+      if (!isEdit && !values.companyId) throw new Error('Empresa cliente é obrigatória.');
       if (!values.name || !values.name.trim()) throw new Error('Nome do contato é obrigatório.');
       if (values.email && !validateEmail(values.email)) throw new Error('E-mail inválido.');
       if (values.phone && !validatePhone(values.phone)) throw new Error('Telefone inválido.');
       if (values.whatsapp && !validatePhone(values.whatsapp)) throw new Error('WhatsApp inválido.');
       attachCustomFields(values, 'client_contact');
-      if (contact?.id) {
+      if (isEdit) {
         delete values.companyId;
         await api(`/api/client-contacts/${contact.id}`, { method: 'PUT', body: JSON.stringify(values) });
         setAlert('Contato atualizado.');
@@ -1449,6 +1635,37 @@ function openContactModal(contact = null) {
       }
     }
   });
+  setTimeout(() => {
+    $('#deleteContactFromEdit')?.addEventListener('click', () => deleteContactFromEdit(contact));
+  });
+}
+
+async function deleteContactFromEdit(contact) {
+  if (!contact?.id || !has('client_contacts.delete')) return;
+  if (!confirm(`Excluir o contato "${contact.name}"?\n\nRelacionamentos já registrados ficarão no histórico, mas sem este contato vinculado.`)) return;
+
+  const btn = $('#deleteContactFromEdit');
+  const originalText = btn?.textContent;
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = 'Excluindo...';
+  }
+
+  try {
+    await api(`/api/client-contacts/${contact.id}`, { method: 'DELETE' });
+    state.cache.contacts = (state.cache.contacts || []).filter(item => item.id !== contact.id);
+    $('.modal-backdrop')?.remove();
+    setAlert('Contato excluído com sucesso.');
+    await render();
+  } catch (error) {
+    setAlert(error.message, 'error');
+    await render();
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = originalText || 'Excluir contato';
+    }
+  }
 }
 
 async function openContactDetail(contactId) {
@@ -1517,7 +1734,7 @@ async function viewInteractions() {
 }
 function interactionsTable(interactions) {
   if (!interactions.length) return '<div class="card empty">Nenhum relacionamento registrado.</div>';
-  return `<div class="table-wrap"><table><thead><tr><th>Data</th><th>Empresa</th><th>Contato</th><th>Canal</th><th>Assunto</th><th>Responsável</th><th>Resultado</th>${customTableHeaders('client_interaction')}<th>Próxima ação</th><th>Status</th><th>Atualizado por</th></tr></thead><tbody>
+  return `<div class="table-wrap"><table><thead><tr><th>Data</th><th>Empresa</th><th>Contato</th><th>Canal</th><th>Assunto</th><th>Responsável</th><th>Resultado</th>${customTableHeaders('client_interaction')}<th>Próxima ação</th><th>Status</th><th>Atualizado por</th><th>Ações</th></tr></thead><tbody>
     ${interactions.map(i => `<tr class="clickable" data-interaction-detail="${i.id}">
       <td>${fmtDate(i.createdAt)}</td>
       <td>${esc(i.companyName || '-')}</td>
@@ -1530,6 +1747,7 @@ function interactionsTable(interactions) {
       <td>${fmtDateOnly(i.nextActionAt)}</td>
       <td>${statusBadge(i.status)}</td>
       <td>${esc(i.updatedByUserName || '-')}</td>
+      <td><div class="split-actions">${has('client_interactions.update') ? `<button class="btn" data-edit-interaction="${i.id}">Editar</button>` : ''}${has('client_interactions.delete') ? `<button class="btn danger" data-delete-interaction="${i.id}">Excluir</button>` : ''}</div></td>
     </tr>`).join('')}
   </tbody></table></div>`;
 }
@@ -1543,6 +1761,14 @@ function bindInteractionEvents() {
 }
 function bindInteractionRowActions() {
   $all('[data-interaction-detail]').forEach(row => row.addEventListener('click', () => openInteractionDetail(row.dataset.interactionDetail)));
+  $all('[data-edit-interaction]').forEach(btn => btn.addEventListener('click', event => {
+    event.stopPropagation();
+    openInteractionModal(state.cache.interactions.find(i => i.id === btn.dataset.editInteraction));
+  }));
+  $all('[data-delete-interaction]').forEach(btn => btn.addEventListener('click', async event => {
+    event.stopPropagation();
+    await deleteInteractionFromEdit(state.cache.interactions.find(i => i.id === btn.dataset.deleteInteraction));
+  }));
 }
 function filterInteractions() {
   const q = $('#interactionSearch').value.toLowerCase();
@@ -1556,36 +1782,70 @@ function filterInteractions() {
   bindInteractionRowActions();
 }
 function openInteractionModal(prefill = {}) {
+  const isEdit = Boolean(prefill?.id);
   const companies = state.cache.companies || [];
   const contacts = state.cache.contacts || [];
   modal({
-    title: 'Novo relacionamento',
-    submitText: 'Registrar interação',
+    title: isEdit ? 'Editar relacionamento' : 'Novo relacionamento',
+    submitText: isEdit ? 'Salvar alterações' : 'Registrar interação',
     body: `
       <div class="form-grid">
-        <div class="field"><label>Empresa cliente *</label><select class="select" name="companyId" required><option value="">Selecione</option>${companies.map(c => `<option value="${c.id}" ${prefill.companyId === c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select></div>
+        <div class="field"><label>Empresa cliente *</label><select class="select" name="companyId" required ${isEdit ? 'disabled' : ''}><option value="">Selecione</option>${companies.map(c => `<option value="${c.id}" ${prefill.companyId === c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select></div>
         <div class="field"><label>Contato</label><select class="select" name="contactId"><option value="">Sem contato específico</option>${contacts.map(c => `<option value="${c.id}" ${prefill.contactId === c.id ? 'selected' : ''}>${esc(c.name)} — ${esc(c.companyName)}</option>`).join('')}</select></div>
-        <div class="field"><label>Canal</label><select class="select" name="channel"><option value="email">E-mail</option><option value="phone">Telefone</option><option value="whatsapp">WhatsApp</option><option value="meeting">Reunião</option><option value="internal_note">Observação interna</option></select></div>
-        <div class="field"><label>Direção</label><select class="select" name="direction"><option value="outbound">Enviado / Ativo</option><option value="inbound">Recebido</option><option value="internal">Interno</option></select></div>
-        <div class="field full"><label>Assunto *</label><input class="input" name="subject" required placeholder="Confirmação de preços da semana" /></div>
-        <div class="field full"><label>Descrição *</label><textarea name="description" required placeholder="Descreva o contato, o que foi alinhado e contexto para outros usuários..."></textarea></div>
-        <div class="field"><label>Resultado</label><input class="input" name="outcome" placeholder="Aguardando retorno" /></div>
-        <div class="field"><label>Próxima ação</label><input class="input" type="datetime-local" name="nextActionAt" /></div>
-        <div class="field"><label>Status</label><select class="select" name="status"><option value="open">Aberto</option><option value="done">Concluído</option><option value="lost">Perdido</option></select></div>
+        <div class="field"><label>Canal</label><select class="select" name="channel"><option value="email" ${prefill.channel === 'email' ? 'selected' : ''}>E-mail</option><option value="phone" ${prefill.channel === 'phone' ? 'selected' : ''}>Telefone</option><option value="whatsapp" ${prefill.channel === 'whatsapp' ? 'selected' : ''}>WhatsApp</option><option value="meeting" ${prefill.channel === 'meeting' ? 'selected' : ''}>Reunião</option><option value="internal_note" ${prefill.channel === 'internal_note' ? 'selected' : ''}>Observação interna</option></select></div>
+        <div class="field"><label>Direção</label><select class="select" name="direction"><option value="outbound" ${prefill.direction === 'outbound' ? 'selected' : ''}>Enviado / Ativo</option><option value="inbound" ${prefill.direction === 'inbound' ? 'selected' : ''}>Recebido</option><option value="internal" ${prefill.direction === 'internal' ? 'selected' : ''}>Interno</option></select></div>
+        <div class="field full"><label>Assunto *</label><input class="input" name="subject" required placeholder="Confirmação de preços da semana" value="${esc(prefill.subject || '')}" /></div>
+        <div class="field full"><label>Descrição *</label><textarea name="description" required placeholder="Descreva o contato, o que foi alinhado e contexto para outros usuários...">${esc(prefill.description || '')}</textarea></div>
+        <div class="field"><label>Resultado</label><input class="input" name="outcome" placeholder="Aguardando retorno" value="${esc(prefill.outcome || '')}" /></div>
+        <div class="field"><label>Próxima ação</label><input class="input" type="datetime-local" name="nextActionAt" value="${prefill.nextActionAt ? String(prefill.nextActionAt).slice(0, 16) : ''}" /></div>
+        <div class="field"><label>Status</label><select class="select" name="status"><option value="open" ${prefill.status === 'open' ? 'selected' : ''}>Aberto</option><option value="done" ${prefill.status === 'done' ? 'selected' : ''}>Concluído</option><option value="lost" ${prefill.status === 'lost' ? 'selected' : ''}>Perdido</option></select></div>
         ${customFieldsHtml('client_interaction', prefill)}
+        ${isEdit && has('client_interactions.delete') ? '<div class="field full delete-zone"><strong>Excluir relacionamento</strong><span class="muted small">Remove este registro da linha de relacionamento.</span><button class="btn danger" type="button" id="deleteInteractionFromEdit">Excluir relacionamento</button></div>' : ''}
       </div>`,
     onSubmit: async values => {
       // Validations: companyId, subject, description
-      if (!values.companyId) throw new Error('Empresa cliente é obrigatória.');
+      if (!isEdit && !values.companyId) throw new Error('Empresa cliente é obrigatória.');
       if (!values.subject || !values.subject.trim()) throw new Error('Assunto é obrigatório.');
       if (!values.description || !values.description.trim()) throw new Error('Descrição é obrigatória.');
       attachCustomFields(values, 'client_interaction');
+      if (isEdit) delete values.companyId;
       if (!values.contactId) delete values.contactId;
       if (!values.nextActionAt) delete values.nextActionAt;
-      await api('/api/client-interactions', { method: 'POST', body: JSON.stringify(values) });
-      setAlert('Relacionamento registrado.');
+      await api(isEdit ? `/api/client-interactions/${prefill.id}` : '/api/client-interactions', { method: isEdit ? 'PUT' : 'POST', body: JSON.stringify(values) });
+      setAlert(isEdit ? 'Relacionamento atualizado.' : 'Relacionamento registrado.');
     }
   });
+  setTimeout(() => {
+    $('#deleteInteractionFromEdit')?.addEventListener('click', () => deleteInteractionFromEdit(prefill));
+  });
+}
+
+async function deleteInteractionFromEdit(interaction) {
+  if (!interaction?.id || !has('client_interactions.delete')) return;
+  if (!confirm(`Excluir o relacionamento "${interaction.subject}"?\n\nEsta ação remove o registro do histórico.`)) return;
+
+  const btn = $('#deleteInteractionFromEdit') || $(`[data-delete-interaction="${interaction.id}"]`);
+  const originalText = btn?.textContent;
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = 'Excluindo...';
+  }
+
+  try {
+    await api(`/api/client-interactions/${interaction.id}`, { method: 'DELETE' });
+    state.cache.interactions = (state.cache.interactions || []).filter(item => item.id !== interaction.id);
+    $('.modal-backdrop')?.remove();
+    setAlert('Relacionamento excluído com sucesso.');
+    await render();
+  } catch (error) {
+    setAlert(error.message, 'error');
+    await render();
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = originalText || 'Excluir relacionamento';
+    }
+  }
 }
 
 function openEmailModal({ company = null, contact = null } = {}) {
@@ -1648,6 +1908,10 @@ function openInteractionDetail(interactionId) {
           ${customFieldsDetailHtml('client_interaction', interaction)}
         </div>
         ${has('client_interactions.update') ? `<div class="detail-panel"><h3>Status do relacionamento</h3><div class="form-grid"><div class="field"><label>Status</label><select class="select" id="interactionStatusUpdate"><option value="open" ${interaction.status === 'open' ? 'selected' : ''}>Aberto</option><option value="done" ${interaction.status === 'done' ? 'selected' : ''}>Concluído</option><option value="lost" ${interaction.status === 'lost' ? 'selected' : ''}>Perdido</option></select></div><div class="field"><label>&nbsp;</label><button class="btn primary" type="button" id="saveInteractionStatus">Atualizar status</button></div></div></div>` : ''}
+        <div class="split-actions">
+          ${has('client_interactions.update') ? '<button class="btn" type="button" id="editInteractionFromDetail">Editar relacionamento</button>' : ''}
+          ${has('client_interactions.delete') ? '<button class="btn danger" type="button" id="deleteInteractionFromDetail">Excluir relacionamento</button>' : ''}
+        </div>
         <div class="detail-panel">
           <h3>Diálogo registrado</h3>
           <p>${esc(interaction.description)}</p>
@@ -1656,6 +1920,8 @@ function openInteractionDetail(interactionId) {
     onSubmit: async () => {}
   });
   setTimeout(() => {
+    $('#editInteractionFromDetail')?.addEventListener('click', () => { $('.modal-backdrop')?.remove(); openInteractionModal(interaction); });
+    $('#deleteInteractionFromDetail')?.addEventListener('click', () => deleteInteractionFromEdit(interaction));
     $('#saveInteractionStatus')?.addEventListener('click', async () => {
       try {
         await api(`/api/client-interactions/${interaction.id}`, { method: 'PUT', body: JSON.stringify({ status: $('#interactionStatusUpdate').value }) });

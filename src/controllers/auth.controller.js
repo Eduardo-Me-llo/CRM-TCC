@@ -41,6 +41,26 @@ function buildAuthResponse(user) {
   };
 }
 
+function hashLoginCode({ userId, email, code }) {
+  return crypto
+    .createHmac('sha256', JWT_SECRET)
+    .update(`${userId}:${normalizeEmail(email)}:${String(code || '').trim()}`)
+    .digest('hex');
+}
+
+async function isLoginCodeValid({ verification, email, code }) {
+  if (!verification?.code_hash) return false;
+
+  if (String(verification.code_hash).startsWith('$2')) {
+    return bcrypt.compare(code, verification.code_hash);
+  }
+
+  const expected = hashLoginCode({ userId: verification.user_id, email, code });
+  const storedBuffer = Buffer.from(String(verification.code_hash), 'hex');
+  const expectedBuffer = Buffer.from(expected, 'hex');
+  return storedBuffer.length === expectedBuffer.length && crypto.timingSafeEqual(storedBuffer, expectedBuffer);
+}
+
 async function isPasswordLoginAllowed(user, password) {
   if (!user) return false;
   if (user.status !== 'active') return false;
@@ -52,14 +72,16 @@ async function login(req, res) {
   const email = normalizeEmail(req.body.email);
   const password = String(req.body.password || '');
   const user = await userModel.findLoginUser(email);
-  const passwordOk = await isPasswordLoginAllowed(user, password);
+  const [passwordOk, loginEmailCodeEnabled] = await Promise.all([
+    isPasswordLoginAllowed(user, password),
+    systemSettingsModel.getBoolean('login_email_code_enabled', true)
+  ]);
   if (!passwordOk) return res.status(401).json({ message: 'E-mail ou senha invalidos.' });
 
-  const loginEmailCodeEnabled = await systemSettingsModel.getBoolean('login_email_code_enabled', true);
   if (!loginEmailCodeEnabled) return res.json(buildAuthResponse(user));
 
   const code = String(crypto.randomInt(0, 100000)).padStart(5, '0');
-  const codeHash = await bcrypt.hash(code, 10);
+  const codeHash = hashLoginCode({ userId: user.id, email: user.email, code });
   await query(
     `INSERT INTO login_verification_codes (user_id, email, code_hash, expires_at)
      VALUES ($1, $2, $3, now() + interval '10 minutes')`,
@@ -104,7 +126,7 @@ async function verifyLogin(req, res) {
   const verification = result.rows[0];
   if (!verification) return res.status(401).json({ message: 'Codigo invalido ou expirado.' });
 
-  const codeOk = await bcrypt.compare(code, verification.code_hash);
+  const codeOk = await isLoginCodeValid({ verification, email: user.email, code });
   if (!codeOk) return res.status(401).json({ message: 'Codigo invalido ou expirado.' });
 
   await query(`UPDATE login_verification_codes SET used_at = now() WHERE id = $1`, [verification.id]);
